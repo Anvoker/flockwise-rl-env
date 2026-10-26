@@ -5,10 +5,10 @@ fn main() {
         //FAIL fit_on!(V, W),
         PsoRule::new(cfg()),
     );
-    let _ = Swarm2::new(
+    run!(Swarm2::new(
         fit_on!(W, ()),
         PsoRule::new(cfg()).for_field::<X>(),
         //CASE InnerSearch::new(5, inner, init_for!(W, T)),
         //FAIL InnerSearch::new(5, inner, init_for!(W, V)),
-    );
+    ), W);
 }

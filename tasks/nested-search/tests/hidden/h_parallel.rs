@@ -33,9 +33,8 @@ fn seen_by<P>(seen: Seen, f: impl Fn(P) -> f64 + Clone + Send + Sync) -> impl Fn
     }
 }
 
-fn nested(outer_seen: &Seen, inner_seen: &Seen, inner_iterations: usize) -> impl Search<Pos = W, Outer = ()> {
+fn nested(outer_seen: Seen, inner_seen: Seen, inner_iterations: usize) -> impl Search<Pos = W, Outer = ()> {
     let problem = Problem::standard();
-    let (outer_seen, inner_seen) = (outer_seen.clone(), inner_seen.clone());
     let inner = Swarm1::new(
         objective(move |w| seen_by(inner_seen.clone(), inner_fit(problem, w))),
         Confined::new(PsoRule::new(CONFIG), region(move |w| t_bounds(problem, w))),
@@ -52,7 +51,7 @@ fn work_runs_on_several_threads() {
     let outer_seen = Seen::default();
     let inner_seen = Seen::default();
     in_pool(8, || {
-        let mut search = nested(&outer_seen, &inner_seen, 40);
+        let mut search = nested(outer_seen.clone(), inner_seen.clone(), 40);
         let mut rng = StdRng::seed_from_u64(1);
         let mut group = initial_group(&Problem::standard(), 64, &mut rng);
         Run::new(3, &mut search, &mut group, 1).for_each(drop);
@@ -66,7 +65,7 @@ fn work_runs_on_several_threads() {
 /// Every particle's final state and every best so far.
 fn nested_run(seed: u64, particles: usize, iterations: usize, inner_iterations: usize) -> (Vec<Particle<W>>, Vec<BestSoFar<W>>) {
     let seen = Seen::default();
-    let mut search = nested(&seen, &seen, inner_iterations);
+    let mut search = nested(seen.clone(), seen, inner_iterations);
     let mut rng = StdRng::seed_from_u64(seed);
     let mut group = initial_group(&Problem::standard(), particles, &mut rng);
     let bests = Run::new(iterations, &mut search, &mut group, seed).collect();

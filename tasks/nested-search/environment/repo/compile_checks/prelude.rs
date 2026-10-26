@@ -103,6 +103,17 @@ macro_rules! init_for {
     };
 }
 
+/// Runs a top-level search over positions `P` once, as users do. A check
+/// that only builds a composition would also demand that every type is
+/// settled before the composition is used, which nothing requires.
+macro_rules! run {
+    ($search:expr, $p:ty) => {{
+        let mut search = $search;
+        let mut particles: Vec<Particle<$p>> = Vec::new();
+        let _ = Run::new(1, &mut search, &mut particles, 0).count();
+    }};
+}
+
 fn cfg() -> PsoParams {
     PsoParams { inertia: 0.7, cognitive: 1.5, social: 1.5 }
 }

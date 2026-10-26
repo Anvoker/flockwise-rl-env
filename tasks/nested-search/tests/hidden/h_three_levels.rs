@@ -103,26 +103,27 @@ fn init3(c: Chain, count: usize) -> impl Fn(YT, &mut dyn RngCore) -> Vec<Particl
     }
 }
 
+#[derive(Clone)]
 struct Logs {
     level2: Log<W>,
     level3: Log<YT>,
 }
 
-fn level3(chain: Chain, log: &Log<YT>) -> impl Search<Pos = T, Outer = YT> + Clone + Send {
-    let (l1, l2) = (log.clone(), log.clone());
+fn level3(chain: Chain, log: Log<YT>) -> impl Search<Pos = T, Outer = YT> + Clone + Send {
+    let (l1, l2) = (log.clone(), log);
     Swarm1::new(
         objective(move |yt: YT| rec_fit(l1.clone(), yt, fit3(chain, yt))),
         Confined::new(PsoRule::new(CONFIG), region(move |yt: YT| rec_bound(l2.clone(), yt, t_bounds(chain, yt)))),
     )
 }
 
-fn level2(chain: Chain, logs: &Logs, sizes: (usize, usize, usize, usize)) -> impl Search<Pos = YT, Outer = W> + Clone + Send {
+fn level2(chain: Chain, logs: Logs, sizes: (usize, usize, usize, usize)) -> impl Search<Pos = YT, Outer = W> + Clone + Send {
     let (_, _, p3, n3) = sizes;
     let (l1, l2) = (logs.level2.clone(), logs.level2.clone());
     Swarm2::new(
         objective(move |w: W| rec_fit(l1.clone(), w, fit2(chain, w))),
         Confined::new(PsoRule::new(CONFIG), region(move |w: W| rec_bound(l2.clone(), w, y_bounds(chain, w)))).for_field::<Y>(),
-        InnerSearch::new(n3, level3(chain, &logs.level3), seeder(rec_init(logs.level3.clone(), init3(chain, p3)))),
+        InnerSearch::new(n3, level3(chain, logs.level3.clone()), seeder(rec_init(logs.level3.clone(), init3(chain, p3)))),
     )
 }
 
@@ -133,7 +134,7 @@ fn solve(chain: Chain, seed: u64, logs: &Logs, sizes: (usize, usize, usize, usiz
     let mut searcher = Swarm2::new(
         objective(move |_| fit1(chain)),
         Confined::new(PsoRule::new(CONFIG), region(|_| x_box)).for_field::<X>(),
-        InnerSearch::new(n2, level2(chain, logs, sizes), seeder(rec_init(logs.level2.clone(), init2(chain, p2)))),
+        InnerSearch::new(n2, level2(chain, logs.clone(), sizes), seeder(rec_init(logs.level2.clone(), init2(chain, p2)))),
     );
 
     let mut rng = StdRng::seed_from_u64(seed + 30);

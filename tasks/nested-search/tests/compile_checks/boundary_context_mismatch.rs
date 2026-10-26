@@ -8,9 +8,9 @@ fn main() {
             //FAIL bound_on!(T, ()),
         ),
     );
-    let _ = Swarm2::new(
+    run!(Swarm2::new(
         fit_on!(W, ()),
         PsoRule::new(cfg()).for_field::<X>(),
         InnerSearch::new(5, inner, init_for!(W, T)),
-    );
+    ), W);
 }
