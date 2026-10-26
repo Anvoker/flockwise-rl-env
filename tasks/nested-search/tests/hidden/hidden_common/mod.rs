@@ -1,17 +1,20 @@
-//! Helpers for the hidden tests: recording components and a user-written mover.
+//! Helpers for the hidden tests: recording closures and a user-written rule.
 #![allow(dead_code)]
 
-use flockwise::{Region, OuterAware, Objective, BestSoFar, Rule, Seeder, Particle, ParticleView, Point};
-use rand::Rng;
+use flockwise::{BestSoFar, Particle, ParticleView, Point};
+use rand::{Rng, RngCore};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
-/// Something that happened inside a composition, with the context active at the time.
+/// Something that happened inside a composition, with the outer position
+/// the component was prepared for.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event<C> {
-    /// An inner search was initialized for this outer particle.
+    /// An inner search was seeded for this outer particle.
     Init(C),
+    /// A component's closure was called with this outer position.
+    Prep(&'static str, C),
     Fit(C),
     Bound(C),
     Move(C),
@@ -40,180 +43,129 @@ pub fn key<C: Debug>(c: &C) -> String {
 }
 
 /// For every inner search (one `Init` per search, with `m` particles and `n`
-/// iterations), the fitness, boundary and mover must each have been called
-/// exactly `m * n` times with that search's outer particle as context, and
-/// never with any other context.
+/// iterations), each of `kinds` must have been prepared exactly once for
+/// that search's outer particle, and called exactly `m * n` times with it,
+/// and never with any other outer position.
 pub fn check_counts<C: Debug + Clone>(events: &[Event<C>], per_search: usize, kinds: &[&str]) {
-    let mut expected: HashMap<String, usize> = HashMap::new();
+    let mut searches: HashMap<String, usize> = HashMap::new();
     for e in events {
         if let Event::Init(c) = e {
-            *expected.entry(key(c)).or_default() += per_search;
+            *searches.entry(key(c)).or_default() += 1;
         }
     }
-    assert!(!expected.is_empty(), "no inner search was initialized");
+    assert!(!searches.is_empty(), "no inner search was seeded");
 
     for kind in kinds {
-        let mut seen: HashMap<String, usize> = HashMap::new();
+        let mut preps: HashMap<String, usize> = HashMap::new();
+        let mut calls: HashMap<String, usize> = HashMap::new();
         for e in events {
-            let c = match (e, *kind) {
-                (Event::Fit(c), "fit") | (Event::Bound(c), "bound") | (Event::Move(c), "move") => c,
-                _ => continue,
-            };
-            *seen.entry(key(c)).or_default() += 1;
+            match (e, *kind) {
+                (Event::Prep(k, c), _) if k == kind => *preps.entry(key(c)).or_default() += 1,
+                (Event::Fit(c), "fit") | (Event::Bound(c), "bound") | (Event::Move(c), "move") => {
+                    *calls.entry(key(c)).or_default() += 1
+                }
+                _ => {}
+            }
         }
-        for (ctx, n) in &seen {
-            let want = expected.get(ctx).copied().unwrap_or(0);
-            assert_eq!(*n, want, "{kind}: {n} calls with context {ctx}, expected {want}");
+        for (ctx, n) in preps.iter().chain(calls.iter()) {
+            assert!(searches.contains_key(ctx), "{kind}: {n} preparations or calls for {ctx}, which no inner search ran for");
         }
-        for (ctx, want) in &expected {
-            let n = seen.get(ctx).copied().unwrap_or(0);
-            assert_eq!(n, *want, "{kind}: {n} calls with context {ctx}, expected {want}");
+        for (ctx, count) in &searches {
+            let p = preps.get(ctx).copied().unwrap_or(0);
+            assert_eq!(p, *count, "{kind}: prepared {p} times for {ctx}, expected once per search ({count})");
+            let n = calls.get(ctx).copied().unwrap_or(0);
+            assert_eq!(n, count * per_search, "{kind}: {n} calls for {ctx}, expected {}", count * per_search);
         }
     }
 }
 
-/// Wraps a fitness function and records the context at every evaluation.
-#[derive(Clone, Debug)]
-pub struct RecFit<F: Objective> {
-    pub inner: F,
-    pub context: F::Outer,
-    pub log: Log<F::Outer>,
+/// For every outer position, each kind's first event is its preparation:
+/// no component is called for an inner search before it was prepared for it.
+pub fn check_prepared_first<C: Debug + Clone>(events: &[Event<C>]) {
+    let mut prepared: HashMap<(String, &str), usize> = HashMap::new();
+    for (i, e) in events.iter().enumerate() {
+        let (kind, c) = match e {
+            Event::Prep(k, c) => {
+                prepared.entry((key(c), *k)).or_insert(i);
+                continue;
+            }
+            Event::Fit(c) => ("fit", c),
+            Event::Bound(c) => ("bound", c),
+            Event::Move(c) => ("move", c),
+            Event::Init(_) => continue,
+        };
+        assert!(
+            prepared.contains_key(&(key(c), kind)),
+            "{kind} was called for {} before it was prepared for it",
+            key(c)
+        );
+    }
 }
 
-impl<F: Objective> RecFit<F>
+// Recording wrappers. Each is called from a component's closure with the
+// outer position it was given, records that, and returns a closure that
+// records the same outer position at every call:
+// `objective(move |w: W| rec_fit(log.clone(), w, inner_fit(problem, w)))`.
+
+pub fn rec_fit<C, P>(log: Log<C>, outer: C, f: impl Fn(P) -> f64 + Clone + Send + Sync) -> impl Fn(P) -> f64 + Clone + Send + Sync
 where
-    F::Outer: Default,
+    C: Copy + Send + Sync + 'static,
 {
-    pub fn new(inner: F, log: Log<F::Outer>) -> Self {
-        RecFit { inner, context: Default::default(), log }
+    log.push(Event::Prep("fit", outer));
+    move |pos: P| {
+        log.push(Event::Fit(outer));
+        f(pos)
     }
 }
 
-impl<F: Objective> OuterAware for RecFit<F> {
-    type Outer = F::Outer;
-    fn see_outer(&mut self, context: Self::Outer) {
-        self.context = context;
-        self.inner.see_outer(context);
-    }
-}
-
-impl<F: Objective> Objective for RecFit<F> {
-    type Pos = F::Pos;
-    fn score(&self, position: Self::Pos) -> f64 {
-        self.log.push(Event::Fit(self.context));
-        self.inner.score(position)
-    }
-}
-
-/// Wraps a boundary and records the context at every call.
-#[derive(Clone, Debug)]
-pub struct RecBound<B: Region> {
-    pub inner: B,
-    pub context: B::Outer,
-    pub log: Log<B::Outer>,
-}
-
-impl<B: Region> RecBound<B>
+pub fn rec_bound<C, P>(log: Log<C>, outer: C, f: impl Fn(P) -> P + Clone + Send + Sync) -> impl Fn(P) -> P + Clone + Send + Sync
 where
-    B::Outer: Default,
+    C: Copy + Send + Sync + 'static,
 {
-    pub fn new(inner: B, log: Log<B::Outer>) -> Self {
-        RecBound { inner, context: Default::default(), log }
+    log.push(Event::Prep("bound", outer));
+    move |pos: P| {
+        log.push(Event::Bound(outer));
+        f(pos)
     }
 }
 
-impl<B: Region> OuterAware for RecBound<B> {
-    type Outer = B::Outer;
-    fn see_outer(&mut self, context: Self::Outer) {
-        self.context = context;
-        self.inner.see_outer(context);
-    }
-}
-
-impl<B: Region> Region for RecBound<B> {
-    type Pos = B::Pos;
-    fn confine(&self, position: Self::Pos) -> Self::Pos {
-        self.log.push(Event::Bound(self.context));
-        self.inner.confine(position)
-    }
-}
-
-/// Wraps a mover and records the context at every move.
-#[derive(Clone, Debug)]
-pub struct RecMover<M: Rule> {
-    pub inner: M,
-    pub context: M::Outer,
-    pub log: Log<M::Outer>,
-}
-
-impl<M: Rule> RecMover<M>
+pub fn rec_move<C, P>(
+    log: Log<C>,
+    outer: C,
+    f: impl Fn(&BestSoFar<P>, &mut dyn RngCore, ParticleView<'_, P>) + Clone + Send + Sync,
+) -> impl Fn(&BestSoFar<P>, &mut dyn RngCore, ParticleView<'_, P>) + Clone + Send + Sync
 where
-    M::Outer: Default,
+    C: Copy + Send + Sync + 'static,
 {
-    pub fn new(inner: M, log: Log<M::Outer>) -> Self {
-        RecMover { inner, context: Default::default(), log }
+    log.push(Event::Prep("move", outer));
+    move |best: &BestSoFar<P>, rng: &mut dyn RngCore, p: ParticleView<'_, P>| {
+        log.push(Event::Move(outer));
+        f(best, rng, p)
     }
 }
 
-impl<M: Rule> OuterAware for RecMover<M> {
-    type Outer = M::Outer;
-    fn see_outer(&mut self, context: Self::Outer) {
-        self.context = context;
-        self.inner.see_outer(context);
-    }
-}
-
-impl<M: Rule> Rule for RecMover<M> {
-    type Pos = M::Pos;
-    type Shared = M::Shared;
-    fn apply<R: Rng + ?Sized>(&self, common: &Self::Shared, rng: &mut R, p: ParticleView<'_, Self::Pos>) {
-        self.log.push(Event::Move(self.context));
-        self.inner.apply(common, rng, p);
-    }
-}
-
-/// Wraps an initializer and records the outer particle of every inner search.
-#[derive(Clone, Debug)]
-pub struct RecInit<I: Seeder> {
-    pub inner: I,
-    pub log: Log<I::Outer>,
-}
-
-impl<I: Seeder> Seeder for RecInit<I> {
-    type Outer = I::Outer;
-    type Inner = I::Inner;
-    fn seed<R: Rng + ?Sized>(&self, outer: Self::Outer, rng: &mut R) -> Vec<Particle<Self::Inner>> {
-        self.log.push(Event::Init(outer));
-        self.inner.seed(outer, rng)
+/// Wraps a seeder's closure and records the outer particle of every inner search.
+pub fn rec_init<C, I>(
+    log: Log<C>,
+    f: impl Fn(C, &mut dyn RngCore) -> Vec<Particle<I>> + Clone + Send + Sync,
+) -> impl Fn(C, &mut dyn RngCore) -> Vec<Particle<I>> + Clone + Send + Sync
+where
+    C: Copy + Send + Sync + 'static,
+{
+    move |outer: C, rng: &mut dyn RngCore| {
+        log.push(Event::Init(outer));
+        f(outer, rng)
     }
 }
 
 /// A user-written PSO variant with a constriction factor, independent of the
-/// library's own rule. Generic over unit and outer position.
-#[derive(Clone, Debug)]
-pub struct ConstrictedPso<U, C> {
-    pub phantom: std::marker::PhantomData<fn() -> (U, C)>,
-}
-
-impl<U, C> ConstrictedPso<U, C> {
-    pub fn new() -> Self {
-        ConstrictedPso { phantom: std::marker::PhantomData }
-    }
-}
-
-impl<U, C: Copy + Send + Sync> OuterAware for ConstrictedPso<U, C> {
-    type Outer = C;
-    fn see_outer(&mut self, _: C) {}
-}
-
-impl<U: Point, C: Copy + Send + Sync> Rule for ConstrictedPso<U, C> {
-    type Pos = U;
-    type Shared = BestSoFar<U>;
-    fn apply<R: Rng + ?Sized>(&self, common: &BestSoFar<U>, rng: &mut R, p: ParticleView<'_, U>) {
+/// library's own rule.
+pub fn constricted_pso<U: Point>() -> impl Fn(&BestSoFar<U>, &mut dyn RngCore, ParticleView<'_, U>) + Clone + Send + Sync {
+    |best: &BestSoFar<U>, rng: &mut dyn RngCore, p: ParticleView<'_, U>| {
         const CHI: f64 = 0.7298;
         const PHI: f64 = 2.05;
         let cognitive = (*p.best_pos - *p.pos).map_scalars(|d| d * PHI * rng.random::<f64>());
-        let social = (common.best_pos - *p.pos).map_scalars(|d| d * PHI * rng.random::<f64>());
+        let social = (best.best_pos - *p.pos).map_scalars(|d| d * PHI * rng.random::<f64>());
         let v = *p.vel + cognitive + social;
         *p.vel = v * CHI;
         *p.pos = *p.pos + *p.vel;

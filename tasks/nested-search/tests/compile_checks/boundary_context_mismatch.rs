@@ -1,16 +1,16 @@
-// Inside an inner search, the boundary's context type differs from the fitness's.
+// Inside an inner search, the region's outer position type differs from the objective's.
 fn main() {
     let inner = Swarm1::new(
-        FitOn::<T, W>::new(),
+        fit_on!(T, W),
         Confined::new(
             PsoRule::new(cfg()),
-            //CASE BoundOn::<T, W>::new(),
-            //FAIL BoundOn::<T, ()>::new(),
+            //CASE bound_on!(T, W),
+            //FAIL bound_on!(T, ()),
         ),
     );
     let _ = Swarm2::new(
-        FitOn::<W, ()>::new(),
+        fit_on!(W, ()),
         PsoRule::new(cfg()).for_field::<X>(),
-        InnerSearch::new(5, inner, InitFor::<W, T>::new()),
+        InnerSearch::new(5, inner, init_for!(W, T)),
     );
 }

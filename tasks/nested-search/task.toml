@@ -6,13 +6,13 @@ artifacts = ["/app/src"]
 
 [task]
 name = "anvoker/nested-search"
-description = "Make a Rust PSO library support composable, nested searches with context passed between levels."
+description = "Design and build a Rust PSO library's architecture for composable, nested, parallel and reproducible searches, given only how users call it."
 authors = [{ name = "Andrei Ionescu" }]
-keywords = ["rust", "generics", "ownership", "type-inference", "optimization"]
+keywords = ["rust", "api-design", "generics", "type-inference", "concurrency", "determinism", "optimization"]
 
 [metadata]
 category = "software-engineering"
-difficulty_explanation = "The starting design borrows its parts and builds inner searches from function pointers. Making it composable needs owned components, context threaded through wrappers and nesting levels, and APIs that infer every type from the arguments."
+difficulty_explanation = "Only the call sites are given: components written as closures that are prepared once per search with the outer particle's position, nested to any depth, run in parallel and reproducible across thread counts. The agent designs the traits, so that every hidden composition infers its types from the arguments, mismatched compositions fail to compile, and each search runs on fresh, prepared components."
 
 [verifier]
 # Each test file also has a 3-minute limit (tests/test.sh), so a solution that
@@ -26,7 +26,7 @@ cpus = 2
 memory_mb = 4096
 
 [agent]
-timeout_sec = 3600
+timeout_sec = 1800
 # While the agent works it can reach only its model API. The public swarmkit
 # history contains a solution, so open network access would let it look one up.
 network_mode = "allowlist"

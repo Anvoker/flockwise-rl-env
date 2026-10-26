@@ -1,36 +1,26 @@
-//! V1, V8, V9: composed searchers are ordinary values. They can be built in a
-//! function, stored, cloned into independent copies and sent to other threads.
+//! Composed searches are ordinary values. They can be built in a function,
+//! stored, cloned into independent copies and sent to other threads.
 
 mod common;
 mod hidden_common;
 
 use common::two_part::*;
 use common::*;
+use flockwise::*;
 use hidden_common::*;
-use flockwise::{
-    Confined, OuterAware, Swarm1, Swarm2, PsoRule, InnerSearch,
-    ForField, Particle, Search, Run,
-};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
-fn build(problem: Problem, seed: u64) -> impl Search<Pos = W> + OuterAware<Outer = ()> + Clone + Send {
+fn build(problem: Problem) -> impl Search<Pos = W, Outer = ()> + Clone + Send {
     let inner = Swarm1::new(
-        InnerFit::new(problem),
-        Confined::new(
-            PsoRule::new(CONFIG),
-            TBounds::new(problem),
-        ),
+        objective(move |w| inner_fit(problem, w)),
+        Confined::new(PsoRule::new(CONFIG), region(move |w| t_bounds(problem, w))),
     );
 
     Swarm2::new(
-        OuterFit(problem),
-        Confined::new(
-            PsoRule::new(CONFIG),
-            XBounds(problem),
-        )
-        .for_field::<X>(),
-        InnerSearch::new(20, inner, TInit { problem, count: 8 }),
+        objective(move |_| outer_fit(problem)),
+        Confined::new(PsoRule::new(CONFIG), region(move |_| x_bounds(problem))).for_field::<X>(),
+        InnerSearch::new(20, inner, seeder(t_init(problem, 8))),
     )
 }
 
@@ -45,7 +35,7 @@ fn a_stored_searcher_runs_on_another_thread() {
     let base = seed_base() * 100;
     let mut rng = StdRng::seed_from_u64(base + 9);
     let job = Job {
-        searcher: build(problem, base + 1),
+        searcher: build(problem),
         group: initial_group(&problem, 16, &mut rng),
     };
     assert_send(&job.searcher);
@@ -53,7 +43,7 @@ fn a_stored_searcher_runs_on_another_thread() {
 
     let handle = std::thread::spawn(move || {
         let mut job = job;
-        Run::new(50, &mut job.searcher, &mut job.group, 0).last().unwrap()
+        Run::new(50, &mut job.searcher, &mut job.group, base).last().unwrap()
     });
     let best = handle.join().unwrap();
 
@@ -65,10 +55,10 @@ fn a_stored_searcher_runs_on_another_thread() {
 #[test]
 fn clones_are_independent_even_when_interleaved() {
     // Copy A starts at the optimum, copy B far from it. Run them one iteration
-    // at a time, interleaved. B's global best must always be one of B's own
+    // at a time, interleaved. B's best so far must always be one of B's own
     // positions: anything shared with A would show A's better positions.
     let problem = Problem::standard();
-    let mut a = build(problem, 5);
+    let mut a = build(problem);
     let mut b = a.clone();
 
     let (x_star, _) = problem.optimum();
@@ -87,28 +77,26 @@ fn clones_are_independent_even_when_interleaved() {
         .collect();
 
     let fitness = |w: &W| problem.fitness(w.x.0, w.t.0);
-    {
-        let mut it_a = Run::new(4, &mut a, &mut group_a, 0);
-        let mut it_b = Run::new(4, &mut b, &mut group_b, 0);
-        let mut best_b = Vec::new();
-        for _ in 0..4 {
-            it_a.next().unwrap();
-            best_b.push(it_b.next().unwrap());
-        }
-        drop(it_a);
-        drop(it_b);
-
-        let b_best_known = group_b.iter().map(|p| p.best_score).fold(f64::NEG_INFINITY, f64::max);
-        let last = best_b.last().unwrap();
-        assert_eq!(last.best_score, b_best_known, "B's global best must come from B's particles");
-        assert!((fitness(&last.best_pos) - last.best_score).abs() < 1e-9);
+    let mut it_a = Run::new(4, &mut a, &mut group_a, 0);
+    let mut it_b = Run::new(4, &mut b, &mut group_b, 0);
+    let mut best_b = Vec::new();
+    for _ in 0..4 {
+        it_a.next().unwrap();
+        best_b.push(it_b.next().unwrap());
     }
+    drop(it_a);
+    drop(it_b);
+
+    let b_best_known = group_b.iter().map(|p| p.best_score).fold(f64::NEG_INFINITY, f64::max);
+    let last = best_b.last().unwrap();
+    assert_eq!(last.best_score, b_best_known, "B's best so far must come from B's particles");
+    assert!((fitness(&last.best_pos) - last.best_score).abs() < 1e-9);
 }
 
 #[test]
 fn a_clone_reproduces_the_original() {
     let problem = Problem::standard();
-    let mut a = build(problem, 11);
+    let mut a = build(problem);
     let mut b = a.clone();
     let mut rng = StdRng::seed_from_u64(12);
     let mut group_a = initial_group(&problem, 8, &mut rng);
@@ -118,4 +106,27 @@ fn a_clone_reproduces_the_original() {
     let best_b = Run::new(5, &mut b, &mut group_b, 0).last().unwrap();
     assert_eq!(best_a, best_b);
     assert_eq!(group_a, group_b);
+}
+
+#[test]
+fn a_used_search_runs_again_like_a_fresh_one() {
+    // A search that has already run, and a clone of it, both behave like a
+    // freshly built search on the same inputs.
+    let problem = Problem::standard();
+    let mut used = build(problem);
+    let mut rng = StdRng::seed_from_u64(13);
+    let mut warmup = initial_group(&problem, 8, &mut rng);
+    Run::new(3, &mut used, &mut warmup, 99).for_each(drop);
+    let mut used_clone = used.clone();
+    let mut fresh = build(problem);
+
+    let start = initial_group(&problem, 8, &mut rng);
+    let mut results = Vec::new();
+    for search in [&mut used, &mut used_clone, &mut fresh] {
+        let mut group = start.clone();
+        let best = Run::new(5, search, &mut group, 1).last().unwrap();
+        results.push((best, group));
+    }
+    assert!(results[0] == results[2], "a used search behaves differently from a fresh one");
+    assert!(results[1] == results[2], "a clone of a used search behaves differently from a fresh one");
 }

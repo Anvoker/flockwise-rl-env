@@ -1,10 +1,9 @@
-use super::model::{
-    AirspaceRegion, LegTimeRegion, Route, RouteObjective, Scenario, TimingObjective, TimingSeeder,
-    Waypoints,
-};
+use super::model::{Route, Scenario, Timings, Waypoints};
+use crate::components::{objective, region, seeder};
 use crate::rules::{Confined, ForField, InnerSearch};
 use crate::search::Run;
 use crate::swarm::{PsoParams, PsoRule, Swarm1, Swarm2};
+use crate::api::Particle;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
@@ -27,19 +26,34 @@ const PARAMS: PsoParams = PsoParams {
 /// leg timings for every candidate route.
 pub fn plan(scenario: &Scenario, budget: &Budget, seed: u64) -> Route {
     let s = *scenario;
+    let count = budget.inner_particles;
 
     let timings = Swarm1::new(
-        TimingObjective::new(s),
-        Confined::new(PsoRule::new(PARAMS), LegTimeRegion::new(s)),
+        objective(move |route: Route| move |timings: Timings| s.score(&Route { waypoints: route.waypoints, timings })),
+        Confined::new(
+            PsoRule::new(PARAMS),
+            region(move |route: Route| {
+                let limits = s.leg_limits(&route.waypoints);
+                move |timings: Timings| limits.confine(timings)
+            }),
+        ),
     );
 
     let mut search = Swarm2::new(
-        RouteObjective::new(s),
-        Confined::new(PsoRule::new(PARAMS), AirspaceRegion::new(s)).for_field::<Waypoints>(),
+        objective(move |_| move |route: Route| s.score(&route)),
+        Confined::new(
+            PsoRule::new(PARAMS),
+            region(move |_| move |waypoints: Waypoints| s.confine_waypoints(waypoints)),
+        )
+        .for_field::<Waypoints>(),
         InnerSearch::new(
             budget.inner_iterations,
             timings,
-            TimingSeeder::new(s, budget.inner_particles),
+            seeder(move |route: Route, rng| {
+                (0..count)
+                    .map(|_| Particle::new(s.random_timings(&route.waypoints, rng), Timings::default()))
+                    .collect()
+            }),
         ),
     );
 

@@ -1,63 +1,59 @@
-//! V11: inside an inner search, the fitness, the boundary and the mover may
-//! each use the outer particle or ignore it. Every combination composes with
-//! no annotations, and each context-using component receives the context.
+//! Inside an inner search, the objective, the region and the rule may each
+//! use the outer particle or ignore it. Every combination composes with no
+//! annotations, and each component that uses the outer position is prepared
+//! once per search with it, and called with it.
 
 mod common;
 mod hidden_common;
 
 use common::two_part::*;
 use common::*;
+use flockwise::*;
 use hidden_common::*;
-use flockwise::{
-    Region, Confined, OuterAware, Objective, BestSoFar, Swarm1, Swarm2,
-    PsoRule, Rule, InnerSearch, ForField, ParticleView, Run,
-};
+use rand::RngCore;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
-/// A fitness for `t` that doesn't look at the outer particle.
-#[derive(Clone, Debug)]
-struct PlainFit;
-impl OuterAware for PlainFit {
-    type Outer = W;
-    fn see_outer(&mut self, _: W) {}
-}
-impl Objective for PlainFit {
-    type Pos = T;
-    fn score(&self, t: T) -> f64 {
-        -sq_dist(t.0, [0.0; K])
+/// A rule that uses the outer particle: it nudges `t` towards the outer `x`.
+fn pull_to_x(w: W) -> impl Fn(&BestSoFar<T>, &mut dyn RngCore, ParticleView<'_, T>) + Clone + Send + Sync {
+    move |_: &BestSoFar<T>, _: &mut dyn RngCore, p: ParticleView<'_, T>| {
+        *p.pos = *p.pos + (T(w.x.0) - *p.pos) * 0.01;
     }
 }
 
-/// A boundary for `t` that doesn't look at the outer particle.
-#[derive(Clone, Debug)]
-struct PlainBounds;
-impl OuterAware for PlainBounds {
-    type Outer = W;
-    fn see_outer(&mut self, _: W) {}
+// The components, each either ignoring the outer position (N) or using it (C).
+macro_rules! fit_n {
+    () => {
+        objective(|_| |t: T| -sq_dist(t.0, [0.0; K]))
+    };
 }
-impl Region for PlainBounds {
-    type Pos = T;
-    fn confine(&self, t: T) -> T {
-        T(clamp(t.0, [-20.0; K], [20.0; K]))
-    }
+macro_rules! bound_n {
+    () => {
+        region(|_| |t: T| T(clamp(t.0, [-20.0; K], [20.0; K])))
+    };
 }
-
-/// A mover that uses the outer particle: it nudges `t` towards the outer `x`.
-#[derive(Clone, Debug)]
-struct PullToX(W);
-impl OuterAware for PullToX {
-    type Outer = W;
-    fn see_outer(&mut self, w: W) {
-        self.0 = w;
-    }
+macro_rules! move_n {
+    () => {
+        PsoRule::new(CONFIG)
+    };
 }
-impl Rule for PullToX {
-    type Pos = T;
-    type Shared = BestSoFar<T>;
-    fn apply<R: rand::Rng + ?Sized>(&self, _: &BestSoFar<T>, _: &mut R, p: ParticleView<'_, T>) {
-        *p.pos = *p.pos + (T(self.0.x.0) - *p.pos) * 0.01;
-    }
+macro_rules! fit_c {
+    ($l:expr, $p:expr) => {{
+        let (l, p) = ($l.clone(), $p);
+        objective(move |w: W| rec_fit(l.clone(), w, inner_fit(p, w)))
+    }};
+}
+macro_rules! bound_c {
+    ($l:expr, $p:expr) => {{
+        let (l, p) = ($l.clone(), $p);
+        region(move |w: W| rec_bound(l.clone(), w, t_bounds(p, w)))
+    }};
+}
+macro_rules! move_c {
+    ($l:expr) => {{
+        let l = $l.clone();
+        rule(move |w: W| rec_move(l.clone(), w, pull_to_x(w)))
+    }};
 }
 
 macro_rules! run {
@@ -65,10 +61,9 @@ macro_rules! run {
         let problem = Problem::standard();
         let inner = Swarm1::new($fit, Confined::new($mover, $bound));
         let mut outer = Swarm2::new(
-            OuterFit(problem),
-            Confined::new(PsoRule::new(CONFIG), XBounds(problem))
-                .for_field::<X>(),
-            InnerSearch::new(3, inner, RecInit { inner: TInit { problem, count: 2 }, log: $log.clone() }),
+            objective(move |_| outer_fit(problem)),
+            Confined::new(PsoRule::new(CONFIG), region(move |_| x_bounds(problem))).for_field::<X>(),
+            InnerSearch::new(3, inner, seeder(rec_init($log.clone(), t_init(problem, 2)))),
         );
         let mut rng = StdRng::seed_from_u64(3);
         let mut group = initial_group(&problem, 3, &mut rng);
@@ -81,43 +76,37 @@ const PER_SEARCH: usize = 2 * 3;
 #[test]
 fn every_combination_of_context_use() {
     let p = Problem::standard();
-    let pso = || PsoRule::new(CONFIG);
 
-    // fit, boundary, mover: C = uses context, N = ignores it.
+    // objective, region, rule: C = uses the outer position, N = ignores it.
     let l = Log::<W>::new();
-    run!(PlainFit, PlainBounds, pso(), l); // NNN
+    run!(fit_n!(), bound_n!(), move_n!(), l); // NNN
     assert!(!l.events().is_empty());
 
     let l = Log::<W>::new();
-    run!(RecFit::new(InnerFit::new(p), l.clone()), PlainBounds, pso(), l); // CNN
+    run!(fit_c!(l, p), bound_n!(), move_n!(), l); // CNN
     check_counts(&l.events(), PER_SEARCH, &["fit"]);
 
     let l = Log::<W>::new();
-    run!(PlainFit, RecBound::new(TBounds::new(p), l.clone()), pso(), l); // NCN
+    run!(fit_n!(), bound_c!(l, p), move_n!(), l); // NCN
     check_counts(&l.events(), PER_SEARCH, &["bound"]);
 
     let l = Log::<W>::new();
-    run!(PlainFit, PlainBounds, RecMover::new(PullToX(W::default()), l.clone()), l); // NNC
+    run!(fit_n!(), bound_n!(), move_c!(l), l); // NNC
     check_counts(&l.events(), PER_SEARCH, &["move"]);
 
     let l = Log::<W>::new();
-    run!(RecFit::new(InnerFit::new(p), l.clone()), RecBound::new(TBounds::new(p), l.clone()), pso(), l); // CCN
+    run!(fit_c!(l, p), bound_c!(l, p), move_n!(), l); // CCN
     check_counts(&l.events(), PER_SEARCH, &["fit", "bound"]);
 
     let l = Log::<W>::new();
-    run!(RecFit::new(InnerFit::new(p), l.clone()), PlainBounds, RecMover::new(PullToX(W::default()), l.clone()), l); // CNC
+    run!(fit_c!(l, p), bound_n!(), move_c!(l), l); // CNC
     check_counts(&l.events(), PER_SEARCH, &["fit", "move"]);
 
     let l = Log::<W>::new();
-    run!(PlainFit, RecBound::new(TBounds::new(p), l.clone()), RecMover::new(PullToX(W::default()), l.clone()), l); // NCC
+    run!(fit_n!(), bound_c!(l, p), move_c!(l), l); // NCC
     check_counts(&l.events(), PER_SEARCH, &["bound", "move"]);
 
     let l = Log::<W>::new();
-    run!(
-        RecFit::new(InnerFit::new(p), l.clone()),
-        RecBound::new(TBounds::new(p), l.clone()),
-        RecMover::new(PullToX(W::default()), l.clone()),
-        l
-    ); // CCC
+    run!(fit_c!(l, p), bound_c!(l, p), move_c!(l), l); // CCC
     check_counts(&l.events(), PER_SEARCH, &["fit", "bound", "move"]);
 }

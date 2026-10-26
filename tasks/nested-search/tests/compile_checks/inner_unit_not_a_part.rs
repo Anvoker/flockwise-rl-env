@@ -1,14 +1,14 @@
-// The inner search's unit is not a part of the outer unit.
+// The inner search's position is not a field of the outer position.
 fn main() {
     let inner = Swarm1::new(
-        //CASE FitOn::<T, W>::new(),
-        //FAIL FitOn::<V, W>::new(),
+        //CASE fit_on!(T, W),
+        //FAIL fit_on!(V, W),
         PsoRule::new(cfg()),
     );
     let _ = Swarm2::new(
-        FitOn::<W, ()>::new(),
+        fit_on!(W, ()),
         PsoRule::new(cfg()).for_field::<X>(),
-        //CASE InnerSearch::new(5, inner, InitFor::<W, T>::new()),
-        //FAIL InnerSearch::new(5, inner, InitFor::<W, V>::new()),
+        //CASE InnerSearch::new(5, inner, init_for!(W, T)),
+        //FAIL InnerSearch::new(5, inner, init_for!(W, V)),
     );
 }

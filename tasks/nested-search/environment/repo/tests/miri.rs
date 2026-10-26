@@ -5,10 +5,7 @@ mod common;
 
 use common::two_part::*;
 use common::*;
-use flockwise::{
-    Confined, Swarm1, Swarm2, PsoRule, InnerSearch, ForField,
-    Run,
-};
+use flockwise::*;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
@@ -16,28 +13,21 @@ use rand::rngs::StdRng;
 fn small_nested_search_runs() {
     let problem = Problem::standard();
 
-    let build = |seed: u64| {
+    let build = |iterations: usize| {
         let inner = Swarm1::new(
-            InnerFit::new(problem),
-            Confined::new(
-                PsoRule::new(CONFIG),
-                TBounds::new(problem),
-            ),
+            objective(move |w| inner_fit(problem, w)),
+            Confined::new(PsoRule::new(CONFIG), region(move |w| t_bounds(problem, w))),
         );
 
         Swarm2::new(
-            OuterFit(problem),
-            Confined::new(
-                PsoRule::new(CONFIG),
-                XBounds(problem),
-            )
-            .for_field::<X>(),
-            InnerSearch::new(3, inner, TInit { problem, count: 3 }),
+            objective(move |_| outer_fit(problem)),
+            Confined::new(PsoRule::new(CONFIG), region(move |_| x_bounds(problem))).for_field::<X>(),
+            InnerSearch::new(iterations, inner, seeder(t_init(problem, 3))),
         )
     };
 
     // Built in a closure and returned, then cloned: both copies run.
-    let mut a = build(1);
+    let mut a = build(3);
     let mut b = a.clone();
 
     let mut rng = StdRng::seed_from_u64(7);

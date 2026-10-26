@@ -1,5 +1,6 @@
-//! The drone delivery model: routes, wind, no-fly zones, flight physics, and
-//! the objectives, regions and seeders a planner searches with.
+//! The drone delivery model: routes, wind, no-fly zones and flight physics,
+//! with what a planner needs to search: scores, ways to keep positions
+//! feasible, and starting positions.
 //!
 //! This file is part of the public contract and must not be changed.
 //!
@@ -8,10 +9,7 @@
 //! leg is flown, so a leg's fastest possible duration depends on the
 //! waypoints and on how long the earlier legs took.
 
-use crate::api::{
-    Objective, OuterAware, Particle, ParticleView, Point, ReadFrom, Region, Seeder, SplitFrom,
-    WriteInto,
-};
+use crate::api::{Particle, ParticleView, Point, ReadFrom, SplitFrom, WriteInto};
 use rand::Rng;
 use std::f64::consts::TAU;
 use std::ops::{Add, Mul, Sub};
@@ -249,7 +247,7 @@ impl Scenario {
                     let offset = bow * 4.0 * f * (1.0 - f);
                     *w = [w[0] + normal[0] * offset, w[1] + normal[1] * offset];
                 }
-                let waypoints = AirspaceRegion::new(*self).confine(waypoints);
+                let waypoints = self.confine_waypoints(waypoints);
                 let timings = self.random_timings(&waypoints, rng);
                 let vel = Waypoints(std::array::from_fn(|_| {
                     [rng.random_range(-1.0..=1.0), rng.random_range(-1.0..=1.0)]
@@ -259,7 +257,9 @@ impl Scenario {
             .collect()
     }
 
-    fn random_timings<R: Rng + ?Sized>(&self, waypoints: &Waypoints, rng: &mut R) -> Timings {
+    /// Random feasible timings for the given waypoints: each leg between its
+    /// fastest possible duration and 1.6 times that.
+    pub fn random_timings<R: Rng + ?Sized>(&self, waypoints: &Waypoints, rng: &mut R) -> Timings {
         let points = self.points(waypoints);
         let mut timings = [0.0; LEGS];
         let mut time = 0.0;
@@ -270,85 +270,14 @@ impl Scenario {
         }
         Timings(timings)
     }
-}
 
-/// Scores whole routes. Takes no outer position.
-#[derive(Copy, Clone, Debug)]
-pub struct RouteObjective {
-    scenario: Scenario,
-}
-
-impl RouteObjective {
-    pub fn new(scenario: Scenario) -> Self {
-        RouteObjective { scenario }
-    }
-}
-
-impl OuterAware for RouteObjective {
-    type Outer = ();
-    fn see_outer(&mut self, _: ()) {}
-}
-
-impl Objective for RouteObjective {
-    type Pos = Route;
-    fn score(&self, route: Route) -> f64 {
-        self.scenario.score(&route)
-    }
-}
-
-/// Scores timings for the outer route's waypoints.
-#[derive(Copy, Clone, Debug)]
-pub struct TimingObjective {
-    scenario: Scenario,
-    route: Route,
-}
-
-impl TimingObjective {
-    pub fn new(scenario: Scenario) -> Self {
-        TimingObjective { scenario, route: Route::default() }
-    }
-}
-
-impl OuterAware for TimingObjective {
-    type Outer = Route;
-    fn see_outer(&mut self, route: Route) {
-        self.route = route;
-    }
-}
-
-impl Objective for TimingObjective {
-    type Pos = Timings;
-    fn score(&self, timings: Timings) -> f64 {
-        self.scenario.score(&Route { waypoints: self.route.waypoints, timings })
-    }
-}
-
-/// Keeps waypoints inside the area and out of the zones. Takes no outer position.
-#[derive(Copy, Clone, Debug)]
-pub struct AirspaceRegion {
-    scenario: Scenario,
-}
-
-impl AirspaceRegion {
-    pub fn new(scenario: Scenario) -> Self {
-        AirspaceRegion { scenario }
-    }
-}
-
-impl OuterAware for AirspaceRegion {
-    type Outer = ();
-    fn see_outer(&mut self, _: ()) {}
-}
-
-impl Region for AirspaceRegion {
-    type Pos = Waypoints;
-    fn confine(&self, waypoints: Waypoints) -> Waypoints {
-        let s = &self.scenario;
+    /// Moves waypoints into the area and out of the zones.
+    pub fn confine_waypoints(&self, waypoints: Waypoints) -> Waypoints {
         Waypoints(waypoints.0.map(|mut p| {
             for k in 0..2 {
-                p[k] = p[k].clamp(s.area[0][k], s.area[1][k]);
+                p[k] = p[k].clamp(self.area[0][k], self.area[1][k]);
             }
-            for zone in &s.zones {
+            for zone in &self.zones {
                 let d = sub(p, zone.center);
                 let dist = norm(d);
                 if dist < zone.radius {
@@ -359,70 +288,36 @@ impl Region for AirspaceRegion {
             p
         }))
     }
+
+    /// The limits on leg durations for the given waypoints.
+    pub fn leg_limits(&self, waypoints: &Waypoints) -> LegLimits {
+        LegLimits {
+            scenario: *self,
+            points: self.points(waypoints),
+        }
+    }
 }
 
-/// Keeps each leg's duration between its fastest possible and the maximum,
-/// for the outer route's waypoints. Each leg's fastest duration depends on
-/// when it starts, so legs are confined in order.
+/// The limits on each leg's duration for one set of waypoints: between its
+/// fastest possible duration and the maximum. A leg's fastest duration
+/// depends on when it starts, so legs are confined in order.
 #[derive(Copy, Clone, Debug)]
-pub struct LegTimeRegion {
+pub struct LegLimits {
     scenario: Scenario,
-    route: Route,
+    points: [[f64; 2]; STOPS + 2],
 }
 
-impl LegTimeRegion {
-    pub fn new(scenario: Scenario) -> Self {
-        LegTimeRegion { scenario, route: Route::default() }
-    }
-}
-
-impl OuterAware for LegTimeRegion {
-    type Outer = Route;
-    fn see_outer(&mut self, route: Route) {
-        self.route = route;
-    }
-}
-
-impl Region for LegTimeRegion {
-    type Pos = Timings;
-    fn confine(&self, timings: Timings) -> Timings {
+impl LegLimits {
+    pub fn confine(&self, timings: Timings) -> Timings {
         let s = &self.scenario;
-        let points = s.points(&self.route.waypoints);
         let mut out = timings.0;
         let mut time = 0.0;
         for i in 0..LEGS {
-            let min = s.min_leg_time(points[i], points[i + 1], time);
+            let min = s.min_leg_time(self.points[i], self.points[i + 1], time);
             out[i] = out[i].clamp(min.min(s.max_leg_time), s.max_leg_time);
             time += out[i];
         }
         Timings(out)
-    }
-}
-
-/// Seeds an inner search over timings: random feasible speeds for the outer
-/// route's waypoints.
-#[derive(Copy, Clone, Debug)]
-pub struct TimingSeeder {
-    scenario: Scenario,
-    count: usize,
-}
-
-impl TimingSeeder {
-    pub fn new(scenario: Scenario, count: usize) -> Self {
-        TimingSeeder { scenario, count }
-    }
-}
-
-impl Seeder for TimingSeeder {
-    type Outer = Route;
-    type Inner = Timings;
-    fn seed<R: Rng + ?Sized>(&self, route: Route, rng: &mut R) -> Vec<Particle<Timings>> {
-        (0..self.count)
-            .map(|_| {
-                let timings = self.scenario.random_timings(&route.waypoints, rng);
-                Particle::new(timings, Timings::default())
-            })
-            .collect()
     }
 }
 

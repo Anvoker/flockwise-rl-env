@@ -1,5 +1,5 @@
-use crate::api::{SplitFrom, Region, OuterAware, Objective, BestSoFar, Rule, Particle, ParticleView, Point};
-use crate::common::{Search, Run, SoloRule};
+use crate::api::{SplitFrom, BestSoFar, Particle, ParticleView, Point};
+use crate::common::{Objective, Region, Rule, Search, Run, SoloRule};
 use rand::Rng;
 use rand::distr::StandardUniform;
 
@@ -83,14 +83,6 @@ pub struct SearchRule<'a, Pos: Point, S: Search<Pos = Pos>> {
     make_search: fn() -> Run<'a, Pos, S>,
 }
 
-impl<'a, Pos: Point, S: Search<Pos = Pos>> OuterAware
-    for SearchRule<'a, Pos, S>
-{
-    type Outer = ();
-
-    fn see_outer(&mut self, _outer: Self::Outer) {}
-}
-
 impl<'a, Pos: Point, S: Search<Pos = Pos>> SoloRule
     for SearchRule<'a, Pos, S>
 {
@@ -107,12 +99,6 @@ impl<'a, Pos: Point, S: Search<Pos = Pos>> SoloRule
             None => panic!(),
         }
     }
-}
-
-impl<'a, G: Region> OuterAware for PsoRule<'a, G> {
-    type Outer = ();
-
-    fn see_outer(&mut self, _outer: Self::Outer) {}
 }
 
 impl<'a, T: Point, G: Region<Pos = T>> Rule

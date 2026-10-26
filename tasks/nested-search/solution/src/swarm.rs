@@ -1,7 +1,8 @@
-use crate::api::{BestSoFar, Objective, OuterAware, Particle, ParticleView, Point, Rule};
+use crate::api::{BestSoFar, Particle, ParticleView, Point};
+use crate::components::{Objective, OuterAware, Rule};
 use crate::search::Search;
-use rand::Rng;
 use rand::rngs::StdRng;
+use rand::{Rng, RngCore};
 use rayon::prelude::*;
 use std::marker::PhantomData;
 
@@ -32,7 +33,7 @@ pub struct Swarm2<O: Objective, R1, R2> {
 impl<O, R1> Swarm1<O, R1>
 where
     O: Objective,
-    R1: Rule<Pos = O::Pos, Shared = BestSoFar<O::Pos>, Outer = O::Outer>,
+    R1: Rule<Pos = O::Pos, Outer = O::Outer>,
 {
     pub fn new(objective: O, r1: R1) -> Self {
         Swarm1 {
@@ -46,8 +47,8 @@ where
 impl<O, R1, R2> Swarm2<O, R1, R2>
 where
     O: Objective,
-    R1: Rule<Pos = O::Pos, Shared = BestSoFar<O::Pos>, Outer = O::Outer>,
-    R2: Rule<Pos = O::Pos, Shared = BestSoFar<O::Pos>, Outer = O::Outer>,
+    R1: Rule<Pos = O::Pos, Outer = O::Outer>,
+    R2: Rule<Pos = O::Pos, Outer = O::Outer>,
 {
     pub fn new(objective: O, r1: R1, r2: R2) -> Self {
         Swarm2 {
@@ -90,7 +91,7 @@ where
 impl<O, R1> Search for Swarm1<O, R1>
 where
     O: Objective,
-    R1: Rule<Pos = O::Pos, Shared = BestSoFar<O::Pos>, Outer = O::Outer>,
+    R1: Rule<Pos = O::Pos, Outer = O::Outer>,
 {
     type Pos = O::Pos;
 
@@ -113,8 +114,8 @@ where
 impl<O, R1, R2> Search for Swarm2<O, R1, R2>
 where
     O: Objective,
-    R1: Rule<Pos = O::Pos, Shared = BestSoFar<O::Pos>, Outer = O::Outer>,
-    R2: Rule<Pos = O::Pos, Shared = BestSoFar<O::Pos>, Outer = O::Outer>,
+    R1: Rule<Pos = O::Pos, Outer = O::Outer>,
+    R2: Rule<Pos = O::Pos, Outer = O::Outer>,
 {
     type Pos = O::Pos;
 
@@ -154,10 +155,19 @@ fn score_all<O: Objective>(objective: &O, best: &mut BestSoFar<O::Pos>, particle
 }
 
 /// The standard global-best PSO update. Ignores the outer position.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct PsoRule<P, Outer> {
     params: PsoParams,
     phantom: PhantomData<fn() -> (P, Outer)>,
+}
+
+impl<P, Outer> Clone for PsoRule<P, Outer> {
+    fn clone(&self) -> Self {
+        PsoRule {
+            params: self.params,
+            phantom: PhantomData,
+        }
+    }
 }
 
 impl<P, Outer> PsoRule<P, Outer>
@@ -185,12 +195,11 @@ where
     Outer: Copy + Send + Sync,
 {
     type Pos = P;
-    type Shared = BestSoFar<P>;
 
-    fn apply<R: Rng + ?Sized>(&self, shared: &Self::Shared, rng: &mut R, p: ParticleView<'_, Self::Pos>) {
+    fn apply(&self, best: &BestSoFar<P>, rng: &mut dyn RngCore, p: ParticleView<'_, Self::Pos>) {
         let (c1, c2) = (self.params.cognitive, self.params.social);
         let cognitive = (*p.best_pos - *p.pos).map_scalars(|d| d * c1 * rng.random::<f64>());
-        let social = (shared.best_pos - *p.pos).map_scalars(|d| d * c2 * rng.random::<f64>());
+        let social = (best.best_pos - *p.pos).map_scalars(|d| d * c2 * rng.random::<f64>());
 
         *p.vel = *p.vel * self.params.inertia + cognitive + social;
         *p.pos = *p.pos + *p.vel;

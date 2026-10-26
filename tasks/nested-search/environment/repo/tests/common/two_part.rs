@@ -5,8 +5,8 @@
 #![allow(dead_code)]
 
 use super::*;
-use flockwise::{Region, OuterAware, Objective, Seeder, Particle};
-use rand::Rng;
+use flockwise::Particle;
+use rand::RngCore;
 use rand::rngs::StdRng;
 
 pub const K: usize = 3;
@@ -42,93 +42,35 @@ impl Problem {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct OuterFit(pub Problem);
+// Components are built from closures. Each function below returns the
+// closure a component uses during one search; the call sites wrap them, as in
+// `objective(move |w| inner_fit(problem, w))`.
 
-impl OuterAware for OuterFit {
-    type Outer = ();
-    fn see_outer(&mut self, _: ()) {}
+pub fn outer_fit(problem: Problem) -> impl Fn(W) -> f64 + Clone + Send + Sync {
+    move |p: W| problem.fitness(p.x.0, p.t.0)
 }
 
-impl Objective for OuterFit {
-    type Pos = W;
-    fn score(&self, p: W) -> f64 {
-        self.0.fitness(p.x.0, p.t.0)
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct XBounds(pub Problem);
-
-impl OuterAware for XBounds {
-    type Outer = ();
-    fn see_outer(&mut self, _: ()) {}
-}
-
-impl Region for XBounds {
-    type Pos = X;
-    fn confine(&self, x: X) -> X {
-        X(clamp(x.0, self.0.x_lo, self.0.x_hi))
-    }
+pub fn x_bounds(problem: Problem) -> impl Fn(X) -> X + Clone + Send + Sync {
+    move |x: X| X(clamp(x.0, problem.x_lo, problem.x_hi))
 }
 
 /// Scores `t` for the outer particle's `x`.
-#[derive(Clone, Debug)]
-pub struct InnerFit {
-    pub problem: Problem,
-    pub outer: W,
-}
-
-impl OuterAware for InnerFit {
-    type Outer = W;
-    fn see_outer(&mut self, outer: W) {
-        self.outer = outer;
-    }
-}
-
-impl Objective for InnerFit {
-    type Pos = T;
-    fn score(&self, t: T) -> f64 {
-        self.problem.fitness(self.outer.x.0, t.0)
-    }
+pub fn inner_fit(problem: Problem, outer: W) -> impl Fn(T) -> f64 + Clone + Send + Sync {
+    move |t: T| problem.fitness(outer.x.0, t.0)
 }
 
 /// Keeps `t` within `w` of the outer particle's `x`.
-#[derive(Clone, Debug)]
-pub struct TBounds {
-    pub problem: Problem,
-    pub outer: W,
+pub fn t_bounds(problem: Problem, outer: W) -> impl Fn(T) -> T + Clone + Send + Sync {
+    let (lo, hi) = (add(outer.x.0, -problem.w), add(outer.x.0, problem.w));
+    move |t: T| T(clamp(t.0, lo, hi))
 }
 
-impl OuterAware for TBounds {
-    type Outer = W;
-    fn see_outer(&mut self, outer: W) {
-        self.outer = outer;
-    }
-}
-
-impl Region for TBounds {
-    type Pos = T;
-    fn confine(&self, t: T) -> T {
-        let x = self.outer.x.0;
-        T(clamp(t.0, add(x, -self.problem.w), add(x, self.problem.w)))
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct TInit {
-    pub problem: Problem,
-    pub count: usize,
-}
-
-impl Seeder for TInit {
-    type Outer = W;
-    type Inner = T;
-
-    fn seed<R: Rng + ?Sized>(&self, outer: W, rng: &mut R) -> Vec<Particle<T>> {
+/// Starting particles for an inner search over `t`.
+pub fn t_init(problem: Problem, count: usize) -> impl Fn(W, &mut dyn RngCore) -> Vec<Particle<T>> + Clone + Send + Sync {
+    move |outer: W, rng: &mut dyn RngCore| {
         let x = outer.x.0;
-        let w = self.problem.w;
-        (0..self.count)
+        let w = problem.w;
+        (0..count)
             .map(|_| {
                 let t = T(uniform(rng, add(x, -w), add(x, w)));
                 let v = T(uniform(rng, [-w; K], [w; K])) * 0.1;
@@ -161,14 +103,3 @@ impl Problem {
     }
 }
 
-impl InnerFit {
-    pub fn new(problem: Problem) -> Self {
-        InnerFit { problem, outer: W::default() }
-    }
-}
-
-impl TBounds {
-    pub fn new(problem: Problem) -> Self {
-        TBounds { problem, outer: W::default() }
-    }
-}

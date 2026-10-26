@@ -1,7 +1,7 @@
-//! V3 (with V12 at depth): three levels of nesting.
+//! Three levels of nesting, with recording components at depth.
 //!
-//! Units: W = (x, yt), YT = (y, t).
-//! Fitness: -|x - a|^2 - |y - (x + c1)|^2 - |t - (y + c2)|^2
+//! Positions: W = (x, yt), YT = (y, t).
+//! Score: -|x - a|^2 - |y - (x + c1)|^2 - |t - (y + c2)|^2
 //! Constraints: y within w1 of x, t within w2 of y.
 //! Level 1 moves x, level 2 moves y for each level-1 particle, level 3 moves t
 //! for each level-2 particle. Each level only sees the level directly above.
@@ -11,13 +11,10 @@ mod common;
 mod hidden_common;
 
 use common::*;
+use flockwise::*;
 use hidden_common::*;
-use flockwise::{
-    Region, Confined, OuterAware, Objective, Swarm1, Swarm2,
-    PsoRule, Seeder, InnerSearch, ForField, Particle, Search, Run,
-};
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngCore, SeedableRng};
 
 const K: usize = 2;
 
@@ -50,79 +47,32 @@ impl Chain {
     }
 }
 
-macro_rules! no_context {
-    ($ty:ty) => {
-        impl OuterAware for $ty {
-            type Outer = ();
-            fn see_outer(&mut self, _: ()) {}
-        }
-    };
-}
-
 // Level 1.
-#[derive(Clone, Debug)]
-struct Fit1(Chain);
-no_context!(Fit1);
-impl Objective for Fit1 {
-    type Pos = W;
-    fn score(&self, w: W) -> f64 {
-        -sq_dist(w.x.0, self.0.a) + self.0.y_term(w.x.0, w.yt.y.0) + self.0.t_term(w.yt.y.0, w.yt.t.0)
-    }
+fn fit1(c: Chain) -> impl Fn(W) -> f64 + Clone + Send + Sync {
+    move |w: W| -sq_dist(w.x.0, c.a) + c.y_term(w.x.0, w.yt.y.0) + c.t_term(w.yt.y.0, w.yt.t.0)
 }
 
-#[derive(Clone, Debug)]
-struct XBox;
-no_context!(XBox);
-impl Region for XBox {
-    type Pos = X;
-    fn confine(&self, x: X) -> X {
-        X(clamp(x.0, [-50.0; K], [50.0; K]))
-    }
+fn x_box(x: X) -> X {
+    X(clamp(x.0, [-50.0; K], [50.0; K]))
 }
 
 // Level 2: sees the level-1 particle.
-#[derive(Clone, Debug)]
-struct Fit2(Chain, W);
-impl OuterAware for Fit2 {
-    type Outer = W;
-    fn see_outer(&mut self, w: W) {
-        self.1 = w;
-    }
-}
-impl Objective for Fit2 {
-    type Pos = YT;
-    fn score(&self, yt: YT) -> f64 {
-        self.0.y_term(self.1.x.0, yt.y.0) + self.0.t_term(yt.y.0, yt.t.0)
-    }
+fn fit2(c: Chain, w: W) -> impl Fn(YT) -> f64 + Clone + Send + Sync {
+    move |yt: YT| c.y_term(w.x.0, yt.y.0) + c.t_term(yt.y.0, yt.t.0)
 }
 
-#[derive(Clone, Debug)]
-struct YBounds(Chain, W);
-impl OuterAware for YBounds {
-    type Outer = W;
-    fn see_outer(&mut self, w: W) {
-        self.1 = w;
-    }
-}
-impl Region for YBounds {
-    type Pos = Y;
-    fn confine(&self, y: Y) -> Y {
-        let x = self.1.x.0;
-        Y(clamp(y.0, add(x, -self.0.w1), add(x, self.0.w1)))
-    }
+fn y_bounds(c: Chain, w: W) -> impl Fn(Y) -> Y + Clone + Send + Sync {
+    let (lo, hi) = (add(w.x.0, -c.w1), add(w.x.0, c.w1));
+    move |y: Y| Y(clamp(y.0, lo, hi))
 }
 
-#[derive(Clone, Debug)]
-struct Init2(Chain, usize);
-impl Seeder for Init2 {
-    type Outer = W;
-    type Inner = YT;
-    fn seed<R: Rng + ?Sized>(&self, w: W, rng: &mut R) -> Vec<Particle<YT>> {
+fn init2(c: Chain, count: usize) -> impl Fn(W, &mut dyn RngCore) -> Vec<Particle<YT>> + Clone + Send + Sync {
+    move |w: W, rng: &mut dyn RngCore| {
         let x = w.x.0;
-        (0..self.1)
+        (0..count)
             .map(|_| {
-                let y = uniform(rng, add(x, -self.0.w1), add(x, self.0.w1));
-                let t = uniform(rng, add(y, -self.0.w2), add(y, self.0.w2));
+                let y = uniform(rng, add(x, -c.w1), add(x, c.w1));
+                let t = uniform(rng, add(y, -c.w2), add(y, c.w2));
                 let pos = YT { y: Y(y), t: T(t) };
                 let vel = YT { y: Y(uniform(rng, [-0.1; K], [0.1; K])), t: T::default() };
                 Particle::new(pos, vel)
@@ -132,47 +82,21 @@ impl Seeder for Init2 {
 }
 
 // Level 3: sees the level-2 particle only.
-#[derive(Clone, Debug)]
-struct Fit3(Chain, YT);
-impl OuterAware for Fit3 {
-    type Outer = YT;
-    fn see_outer(&mut self, yt: YT) {
-        self.1 = yt;
-    }
-}
-impl Objective for Fit3 {
-    type Pos = T;
-    fn score(&self, t: T) -> f64 {
-        self.0.t_term(self.1.y.0, t.0)
-    }
+fn fit3(c: Chain, yt: YT) -> impl Fn(T) -> f64 + Clone + Send + Sync {
+    move |t: T| c.t_term(yt.y.0, t.0)
 }
 
-#[derive(Clone, Debug)]
-struct TBounds(Chain, YT);
-impl OuterAware for TBounds {
-    type Outer = YT;
-    fn see_outer(&mut self, yt: YT) {
-        self.1 = yt;
-    }
-}
-impl Region for TBounds {
-    type Pos = T;
-    fn confine(&self, t: T) -> T {
-        let y = self.1.y.0;
-        T(clamp(t.0, add(y, -self.0.w2), add(y, self.0.w2)))
-    }
+fn t_bounds(c: Chain, yt: YT) -> impl Fn(T) -> T + Clone + Send + Sync {
+    let (lo, hi) = (add(yt.y.0, -c.w2), add(yt.y.0, c.w2));
+    move |t: T| T(clamp(t.0, lo, hi))
 }
 
-#[derive(Clone, Debug)]
-struct Init3(Chain, usize);
-impl Seeder for Init3 {
-    type Outer = YT;
-    type Inner = T;
-    fn seed<R: Rng + ?Sized>(&self, yt: YT, rng: &mut R) -> Vec<Particle<T>> {
+fn init3(c: Chain, count: usize) -> impl Fn(YT, &mut dyn RngCore) -> Vec<Particle<T>> + Clone + Send + Sync {
+    move |yt: YT, rng: &mut dyn RngCore| {
         let y = yt.y.0;
-        (0..self.1)
+        (0..count)
             .map(|_| {
-                let t = T(uniform(rng, add(y, -self.0.w2), add(y, self.0.w2)));
+                let t = T(uniform(rng, add(y, -c.w2), add(y, c.w2)));
                 Particle::new(t, T(uniform(rng, [-0.1; K], [0.1; K])))
             })
             .collect()
@@ -184,34 +108,21 @@ struct Logs {
     level3: Log<YT>,
 }
 
-fn level3(chain: Chain, seed: u64, log: &Log<YT>) -> impl Search<Pos = T> + OuterAware<Outer = YT> + Clone + Send {
+fn level3(chain: Chain, log: &Log<YT>) -> impl Search<Pos = T, Outer = YT> + Clone + Send {
+    let (l1, l2) = (log.clone(), log.clone());
     Swarm1::new(
-        RecFit::new(Fit3(chain, YT::default()), log.clone()),
-        Confined::new(
-            PsoRule::new(CONFIG),
-            RecBound::new(TBounds(chain, YT::default()), log.clone()),
-        ),
+        objective(move |yt: YT| rec_fit(l1.clone(), yt, fit3(chain, yt))),
+        Confined::new(PsoRule::new(CONFIG), region(move |yt: YT| rec_bound(l2.clone(), yt, t_bounds(chain, yt)))),
     )
 }
 
-fn level2(
-    chain: Chain,
-    seed: u64,
-    logs: &Logs,
-    sizes: (usize, usize, usize, usize),
-) -> impl Search<Pos = YT> + OuterAware<Outer = W> + Clone + Send {
+fn level2(chain: Chain, logs: &Logs, sizes: (usize, usize, usize, usize)) -> impl Search<Pos = YT, Outer = W> + Clone + Send {
     let (_, _, p3, n3) = sizes;
+    let (l1, l2) = (logs.level2.clone(), logs.level2.clone());
     Swarm2::new(
-        RecFit::new(Fit2(chain, W::default()), logs.level2.clone()),
-        Confined::new(
-            PsoRule::new(CONFIG),
-            RecBound::new(YBounds(chain, W::default()), logs.level2.clone()),
-        )
-        .for_field::<Y>(),
-        InnerSearch::new(
-            n3,
-            level3(chain, seed + 1, &logs.level3),
-            RecInit { inner: Init3(chain, p3), log: logs.level3.clone() }),
+        objective(move |w: W| rec_fit(l1.clone(), w, fit2(chain, w))),
+        Confined::new(PsoRule::new(CONFIG), region(move |w: W| rec_bound(l2.clone(), w, y_bounds(chain, w)))).for_field::<Y>(),
+        InnerSearch::new(n3, level3(chain, &logs.level3), seeder(rec_init(logs.level3.clone(), init3(chain, p3)))),
     )
 }
 
@@ -220,12 +131,9 @@ fn solve(chain: Chain, seed: u64, logs: &Logs, sizes: (usize, usize, usize, usiz
     let (p1, n1) = outer;
 
     let mut searcher = Swarm2::new(
-        Fit1(chain),
-        Confined::new(PsoRule::new(CONFIG), XBox).for_field::<X>(),
-        InnerSearch::new(
-            n2,
-            level2(chain, seed + 10, logs, sizes),
-            RecInit { inner: Init2(chain, p2), log: logs.level2.clone() }),
+        objective(move |_| fit1(chain)),
+        Confined::new(PsoRule::new(CONFIG), region(|_| x_box)).for_field::<X>(),
+        InnerSearch::new(n2, level2(chain, logs, sizes), seeder(rec_init(logs.level2.clone(), init2(chain, p2)))),
     );
 
     let mut rng = StdRng::seed_from_u64(seed + 30);
@@ -261,7 +169,7 @@ fn three_levels_find_the_optimum() {
 }
 
 #[test]
-fn each_level_sees_the_level_directly_above() {
+fn each_level_is_prepared_for_the_level_directly_above() {
     let chain = chain();
     let logs = Logs { level2: Log::new(), level3: Log::new() };
     let (p2, n2, p3, n3) = (3, 2, 2, 3);
@@ -269,4 +177,6 @@ fn each_level_sees_the_level_directly_above() {
 
     check_counts(&logs.level2.events(), p2 * n2, &["fit", "bound"]);
     check_counts(&logs.level3.events(), p3 * n3, &["fit", "bound"]);
+    check_prepared_first(&logs.level2.events());
+    check_prepared_first(&logs.level3.events());
 }

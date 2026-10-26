@@ -35,23 +35,36 @@ MUTANTS = {
         "Searches never reset their best so far: the real bug from 2026-02-06 to 2026-04-22",
         [("swarm.rs", "fn begin(&mut self) {" + NL + "        self.best = BestSoFar::new();" + NL + "    }", "fn begin(&mut self) {}", 0)],
     ),
-    "inner_sees_nothing": (
-        "The inner search is never shown the outer particle",
-        [("rules.rs", "        search.see_outer(*p.pos);" + NL, "", 1)],
+    "inner_prepared_for_default": (
+        "Each inner search is prepared for the default position instead of its outer particle",
+        [("rules.rs", "        search.see_outer(*p.pos);" + NL, "        search.see_outer(Default::default());" + NL, 1)],
     ),
-    "outer_shown_after_search": (
-        "The inner search is shown the outer particle only after it ran",
+    "inner_prepared_for_swarm_best": (
+        "Each inner search is prepared for the outer swarm's best position instead of its own particle",
         [
-            ("rules.rs", "        search.see_outer(*p.pos);" + NL + NL, "", 1),
-            ("rules.rs", ".last();" + NL, ".last();" + NL + "        search.see_outer(*p.pos);" + NL, 1),
+            ("rules.rs", "        search.see_outer(*p.pos);" + NL, "        search.see_outer(_best.best_pos);" + NL, 1),
         ],
     ),
+    "prepare_per_call": (
+        "A closure-built component calls its closure on every use instead of once per search",
+        [
+            ("components.rs", "    ready: Option<G>," + NL, "    ready: Option<G>," + NL + "    outer: Option<O>," + NL, 1),
+            ("components.rs", "            ready: None," + NL + "            phantom: PhantomData,", "            ready: None," + NL + "            outer: None," + NL + "            phantom: PhantomData,", 0),
+            ("components.rs", "        ready: None," + NL + "        phantom: PhantomData,", "        ready: None," + NL + "        outer: None," + NL + "        phantom: PhantomData,", 0),
+            ("components.rs", "        self.ready = Some((self.make)(outer));", "        self.ready = Some((self.make)(outer));" + NL + "        self.outer = Some(outer);", 1),
+            ("components.rs", "        (self.0.ready())(pos)" + NL + "    }" + NL + "}" + NL + NL + "/// A region", "        let _ = self.0.ready();" + NL + "        ((self.0.make)(self.0.outer.unwrap()))(pos)" + NL + "    }" + NL + "}" + NL + NL + "/// A region", 1),
+        ],
+    ),
+    "stale_preparation_on_rerun": (
+        "A component prepared once keeps that preparation when its search runs again",
+        [("components.rs", "        self.ready = Some((self.make)(outer));", "        if self.ready.is_none() {" + NL + "            self.ready = Some((self.make)(outer));" + NL + "        }", 1)],
+    ),
     "region_sees_nothing": (
-        "Confined rules don't show the outer particle to their region",
+        "Confined rules don't prepare their region",
         [("rules.rs", "        self.region.see_outer(outer);" + NL, "", 1)],
     ),
     "rules_see_nothing": (
-        "Swarms show the outer particle to the objective only, not to their rules",
+        "Swarms prepare their objective only, not their rules",
         [
             ("swarm.rs", "        self.r1.see_outer(outer);" + NL, "", 0),
             ("swarm.rs", "        self.r2.see_outer(outer);" + NL, "", 0),
@@ -81,15 +94,15 @@ MUTANTS = {
             ),
             (
                 "swarm.rs",
-                "let social = (shared.best_pos - *p.pos).map_scalars(|d| d * c2 * rng.random::<f64>());",
-                "let social = (shared.best_pos - *p.pos) * (c2 * r2);",
+                "let social = (best.best_pos - *p.pos).map_scalars(|d| d * c2 * rng.random::<f64>());",
+                "let social = (best.best_pos - *p.pos) * (c2 * r2);",
                 1,
             ),
         ],
     ),
     "field_ignores_best": (
         "A field-restricted rule is shown the particle's own best instead of the swarm's",
-        [("rules.rs", "best_pos: <R::Pos as ReadFrom>::read(&shared.best_pos),", "best_pos: <R::Pos as ReadFrom>::read(&*p.best_pos),", 1)],
+        [("rules.rs", "best_pos: <R::Pos as ReadFrom>::read(&best.best_pos),", "best_pos: <R::Pos as ReadFrom>::read(&*p.best_pos),", 1)],
     ),
     "inner_writes_nothing": (
         "The inner search runs but its result is never written back",
@@ -140,15 +153,6 @@ MUTANTS = {
 
 # Valid solutions that make other reasonable design choices than the reference.
 ALTERNATIVES = {
-    "hashed_particle_rngs": (
-        "Each particle's RNG is seeded by hashing the run seed with the particle's index",
-        [(
-            "search.rs",
-            "        let mut master = StdRng::seed_from_u64(seed);" + NL + "        let rngs = (0..particles.len()).map(|_| StdRng::seed_from_u64(master.random())).collect();",
-            "        let rngs = (0..particles.len() as u64)" + NL + "            .map(|i| StdRng::seed_from_u64(seed ^ i.wrapping_add(1).wrapping_mul(0x9E37_79B9_7F4A_7C15)))" + NL + "            .collect();",
-            1,
-        )],
-    ),
     "parallel_reduce_for_best": (
         "The best so far is found by a parallel reduction with an index tie-break",
         [(
@@ -210,6 +214,16 @@ ALTERNATIVES = {
 }
 
 
+# Valid solutions with a different design throughout: (why, source tree
+# relative to the repository root).
+ALTERNATIVE_TREES = {
+    "prepared": (
+        "Components generic over the outer position (Rule<O>), prepared into separate values per search, hashed per-particle RNG streams, a parallel reduction for the best",
+        "tools/alternatives/nested-search/prepared/src",
+    ),
+}
+
+
 def apply(src: Path, edits) -> None:
     for name, old, new, count in edits:
         path = src / name
@@ -221,10 +235,10 @@ def apply(src: Path, edits) -> None:
         path.write_text(text, encoding="utf-8", newline=NL)
 
 
-def verify_variant(task: Path, work: Path, bash: str, verify: Path, name: str, edits):
+def verify_variant(task: Path, work: Path, bash: str, verify: Path, name: str, edits, tree: Path | None = None):
     src = work / "src" / name
     shutil.rmtree(src, ignore_errors=True)
-    shutil.copytree(task / "solution" / "src", src)
+    shutil.copytree(tree or task / "solution" / "src", src)
     apply(src, edits)
     run = subprocess.run(
         [bash, verify.as_posix(), task.as_posix(), src.as_posix(), (work / "runs" / name).as_posix()],
@@ -247,15 +261,18 @@ def main() -> None:
 
     if sys.argv[3:] == ["--alternatives"]:
         rejected = []
-        for name, (why, edits) in ALTERNATIVES.items():
-            failed = verify_variant(task, work, bash, verify, name, edits)
+        root = Path(__file__).resolve().parent.parent
+        variants = [(name, why, edits, None) for name, (why, edits) in ALTERNATIVES.items()]
+        variants += [(name, why, [], root / tree) for name, (why, tree) in ALTERNATIVE_TREES.items()]
+        for name, why, edits, tree in variants:
+            failed = verify_variant(task, work, bash, verify, name, edits, tree)
             if failed:
                 print(f"REJECTED {name}: {why}: {', '.join(failed)}")
                 rejected.append(name)
             else:
                 print(f"accepted {name}")
             sys.stdout.flush()
-        print(f"{len(ALTERNATIVES) - len(rejected)}/{len(ALTERNATIVES)} alternatives accepted")
+        print(f"{len(variants) - len(rejected)}/{len(variants)} alternatives accepted")
         sys.exit(1 if rejected else 0)
 
     names = sys.argv[3:] or list(MUTANTS)

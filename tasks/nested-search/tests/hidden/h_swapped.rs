@@ -5,89 +5,29 @@ mod common;
 
 use common::two_part::*;
 use common::*;
-use flockwise::{
-    Region, Confined, OuterAware, Objective, Swarm1, Swarm2,
-    PsoRule, Seeder, InnerSearch, ForField, Particle, Run,
-};
+use flockwise::*;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
-
-/// Keeps the outer `t` in the same box as `x`.
-#[derive(Clone, Debug)]
-struct TBox;
-
-impl OuterAware for TBox {
-    type Outer = ();
-    fn see_outer(&mut self, _: ()) {}
-}
-
-impl Region for TBox {
-    type Pos = T;
-    fn confine(&self, t: T) -> T {
-        T(clamp(t.0, [-30.0; K], [30.0; K]))
-    }
-}
+use rand::{RngCore, SeedableRng};
 
 /// Scores `x` for the outer particle's `t`.
-#[derive(Clone, Debug)]
-struct InnerFitX {
-    problem: Problem,
-    outer: W,
-}
-
-impl OuterAware for InnerFitX {
-    type Outer = W;
-    fn see_outer(&mut self, outer: W) {
-        self.outer = outer;
-    }
-}
-
-impl Objective for InnerFitX {
-    type Pos = X;
-    fn score(&self, x: X) -> f64 {
-        self.problem.fitness(x.0, self.outer.t.0)
-    }
+fn inner_fit_x(problem: Problem, outer: W) -> impl Fn(X) -> f64 + Clone + Send + Sync {
+    move |x: X| problem.fitness(x.0, outer.t.0)
 }
 
 /// Keeps `x` within `w` of the outer particle's `t`, and inside the box.
-#[derive(Clone, Debug)]
-struct XBoundsFromT {
-    problem: Problem,
-    outer: W,
+fn x_bounds_from_t(problem: Problem, outer: W) -> impl Fn(X) -> X + Clone + Send + Sync {
+    let t = outer.t.0;
+    let w = problem.w;
+    let lo: [f64; K] = std::array::from_fn(|i| (t[i] - w).max(problem.x_lo[i]));
+    let hi: [f64; K] = std::array::from_fn(|i| (t[i] + w).min(problem.x_hi[i]));
+    move |x: X| X(clamp(x.0, lo, hi))
 }
 
-impl OuterAware for XBoundsFromT {
-    type Outer = W;
-    fn see_outer(&mut self, outer: W) {
-        self.outer = outer;
-    }
-}
-
-impl Region for XBoundsFromT {
-    type Pos = X;
-    fn confine(&self, x: X) -> X {
-        let t = self.outer.t.0;
-        let w = self.problem.w;
-        let lo = std::array::from_fn(|i| (t[i] - w).max(self.problem.x_lo[i]));
-        let hi = std::array::from_fn(|i| (t[i] + w).min(self.problem.x_hi[i]));
-        X(clamp(x.0, lo, hi))
-    }
-}
-
-#[derive(Clone, Debug)]
-struct XInit {
-    problem: Problem,
-    count: usize,
-}
-
-impl Seeder for XInit {
-    type Outer = W;
-    type Inner = X;
-
-    fn seed<R: Rng + ?Sized>(&self, outer: W, rng: &mut R) -> Vec<Particle<X>> {
+fn x_init(problem: Problem, count: usize) -> impl Fn(W, &mut dyn RngCore) -> Vec<Particle<X>> + Clone + Send + Sync {
+    move |outer: W, rng: &mut dyn RngCore| {
         let t = outer.t.0;
-        let w = self.problem.w;
-        (0..self.count)
+        let w = problem.w;
+        (0..count)
             .map(|_| {
                 let x = X(uniform(rng, add(t, -w), add(t, w)));
                 let v = X(uniform(rng, [-w; K], [w; K])) * 0.1;
@@ -99,24 +39,14 @@ impl Seeder for XInit {
 
 fn solve(problem: Problem, seed: u64) -> W {
     let inner = Swarm1::new(
-        InnerFitX {
-            problem,
-            outer: W::default(),
-        },
-        Confined::new(
-            PsoRule::new(CONFIG),
-            XBoundsFromT {
-                problem,
-                outer: W::default(),
-            },
-        ),
+        objective(move |w| inner_fit_x(problem, w)),
+        Confined::new(PsoRule::new(CONFIG), region(move |w| x_bounds_from_t(problem, w))),
     );
 
     let mut outer = Swarm2::new(
-        OuterFit(problem),
-        Confined::new(PsoRule::new(CONFIG), TBox)
-            .for_field::<T>(),
-        InnerSearch::new(30, inner, XInit { problem, count: 10 }),
+        objective(move |_| outer_fit(problem)),
+        Confined::new(PsoRule::new(CONFIG), region(|_| |t: T| T(clamp(t.0, [-30.0; K], [30.0; K])))).for_field::<T>(),
+        InnerSearch::new(30, inner, seeder(x_init(problem, 10))),
     );
 
     let mut rng = StdRng::seed_from_u64(seed);

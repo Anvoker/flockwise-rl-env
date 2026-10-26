@@ -1,8 +1,8 @@
-// A mover for `x` (its boundary is over X) placed on the `t` part.
+// A rule for `x` (its region is over X) placed on the `t` field.
 fn main() {
     let _ = Swarm1::new(
-        FitOn::<W, ()>::new(),
-        Confined::new(PsoRule::new(cfg()), BoundOn::<X, ()>::new())
+        fit_on!(W, ()),
+        Confined::new(PsoRule::new(cfg()), bound_on!(X, ()))
             //CASE .for_field::<X>(),
             //FAIL .for_field::<T>(),
     );

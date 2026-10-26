@@ -1,5 +1,31 @@
-use crate::api::{OuterAware, BestSoFar, Rule, Particle, ParticleView, Point};
+use crate::api::{BestSoFar, Particle, ParticleView, Point};
 use rand::Rng;
+
+pub trait Objective {
+    type Pos: Point;
+
+    fn score(&self, pos: Self::Pos) -> f64;
+}
+
+pub trait Region {
+    type Pos: Point;
+
+    fn confine(&self, pos: Self::Pos) -> Self::Pos;
+}
+
+pub trait Rule {
+    type Pos: Point;
+    type Shared;
+
+    fn apply<R: Rng + ?Sized>(&self, shared: &Self::Shared, rng: &mut R, p: ParticleView<'_, Self::Pos>);
+}
+
+pub trait Seeder {
+    type Outer: Point;
+    type Inner: Point;
+
+    fn seed<R: Rng + ?Sized>(&self, outer: Self::Outer, rng: &mut R) -> Vec<Particle<Self::Inner>>;
+}
 
 pub trait SoloRule {
     type Pos: Point;
@@ -7,7 +33,7 @@ pub trait SoloRule {
     fn apply(&self, p: ParticleView<'_, Self::Pos>);
 }
 
-impl<T: SoloRule<Pos = Pos> + OuterAware + Send + Sync, Pos: Point> Rule for T {
+impl<T: SoloRule<Pos = Pos>, Pos: Point> Rule for T {
     type Pos = Pos;
     type Shared = ();
 

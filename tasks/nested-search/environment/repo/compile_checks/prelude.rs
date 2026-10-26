@@ -3,8 +3,7 @@
 
 use flockwise::*;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
-use std::marker::PhantomData;
+use rand::{RngCore, SeedableRng};
 use std::ops::{Add, Mul, Sub};
 
 macro_rules! unit {
@@ -76,46 +75,32 @@ macro_rules! field_of {
 field_of!(x: X);
 field_of!(t: T);
 
-/// A fitness over unit `U` that takes context `C`.
-#[derive(Clone, Debug)]
-struct FitOn<U, C>(PhantomData<fn() -> (U, C)>);
-impl<U, C> FitOn<U, C> {
-    fn new() -> Self { FitOn(PhantomData) }
-}
-impl<U, C: Copy + Send + Sync> OuterAware for FitOn<U, C> {
-    type Outer = C;
-    fn see_outer(&mut self, _: C) {}
-}
-impl<U: Point, C: Copy + Send + Sync> Objective for FitOn<U, C> {
-    type Pos = U;
-    fn score(&self, _: U) -> f64 { 0.0 }
+/// An objective over positions `U`, for outer positions `C`.
+macro_rules! fit_on {
+    ($u:ty, $c:ty) => {
+        objective(|_: $c| |_: $u| 0.0)
+    };
 }
 
-/// A boundary over unit `U` that takes context `C`.
-#[derive(Clone, Debug)]
-struct BoundOn<U, C>(PhantomData<fn() -> (U, C)>);
-impl<U, C> BoundOn<U, C> {
-    fn new() -> Self { BoundOn(PhantomData) }
-}
-impl<U, C: Copy + Send + Sync> OuterAware for BoundOn<U, C> {
-    type Outer = C;
-    fn see_outer(&mut self, _: C) {}
-}
-impl<U: Point, C: Copy + Send + Sync> Region for BoundOn<U, C> {
-    type Pos = U;
-    fn confine(&self, u: U) -> U { u }
+/// A region over positions `U`, for outer positions `C`.
+macro_rules! bound_on {
+    ($u:ty, $c:ty) => {
+        region(|_: $c| |u: $u| u)
+    };
 }
 
-/// Initializes inner particles of unit `I` from an outer particle of unit `O`.
-#[derive(Clone, Debug)]
-struct InitFor<O, I>(PhantomData<fn() -> (O, I)>);
-impl<O, I> InitFor<O, I> {
-    fn new() -> Self { InitFor(PhantomData) }
+/// A rule over positions `U`, for outer positions `C`.
+macro_rules! rule_on {
+    ($u:ty, $c:ty) => {
+        rule(|_: $c| |_: &BestSoFar<$u>, _: &mut dyn RngCore, _: ParticleView<'_, $u>| {})
+    };
 }
-impl<O: Point, I: Point> Seeder for InitFor<O, I> {
-    type Outer = O;
-    type Inner = I;
-    fn seed<R: Rng + ?Sized>(&self, _: O, _: &mut R) -> Vec<Particle<I>> { Vec::new() }
+
+/// Starting particles of positions `I` for outer positions `O`.
+macro_rules! init_for {
+    ($o:ty, $i:ty) => {
+        seeder(|_: $o, _: &mut dyn RngCore| Vec::<Particle<$i>>::new())
+    };
 }
 
 fn cfg() -> PsoParams {
