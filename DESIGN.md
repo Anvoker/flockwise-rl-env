@@ -229,6 +229,7 @@ The same tool also runs **alternative valid solutions** (`--alternatives`), whic
 |---|---|---|---|---|---|---|
 | 2026-10-26 | nested-search v1 | Claude Sonnet 5.5 (subscription) | Claude Code via Harbor 0.25.0 | 1 h agent time, network limited to the model API | 1 | Pass: 7 turns, 130 s agent time, about $0.40 at API prices. A genuine solution, close to the reference's design, with no hacks. |
 | 2026-10-26 | nested-search v2 | Claude Sonnet 5.5 (subscription) | Claude Code via Harbor 0.25.0 | same | 1 | Pass: 6 turns, 153 s agent time, about $0.42. Genuine; locked files untouched. The three field traits, the hidden role swap and the route domain made no visible difference. |
+| 2026-10-26 | nested-search v3 | Claude Sonnet 5.5 (subscription) | Claude Code via Harbor 0.25.0 | same | 1 | Pass: 9 turns, 177 s agent time, about $0.46. Genuine: every check passed, `api.rs` untouched. Per-particle random streams from a hash of the seed and the particle index (the same idea as one of the accepted alternatives), parallel scoring, a fresh inner search per particle. Reported speedup 3.6×. Parallelism added 3 turns and 24 seconds. |
 
 One attempt isn't a pass rate, but it shows v1 is far too easy for current mid-size models: the solve took no exploration and one fix.
 
