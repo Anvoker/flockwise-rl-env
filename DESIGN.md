@@ -215,6 +215,7 @@ The same tool also runs **alternative valid solutions** (`--alternatives`), whic
 | Date | Task | Model | Harness | Budget | Attempts | Result |
 |---|---|---|---|---|---|---|
 | 2026-10-26 | nested-search v1 | Claude Sonnet 5.5 (subscription) | Claude Code via Harbor 0.25.0 | 1 h agent time, network limited to the model API | 1 | Pass: 7 turns, 130 s agent time, about $0.40 at API prices. A genuine solution, close to the reference's design, with no hacks. |
+| 2026-10-26 | nested-search v2 | Claude Sonnet 5.5 (subscription) | Claude Code via Harbor 0.25.0 | same | 1 | Pass: 6 turns, 153 s agent time, about $0.42. Genuine; locked files untouched. The three field traits, the hidden role swap and the route domain made no visible difference. |
 
 One attempt isn't a pass rate, but it shows v1 is far too easy for current mid-size models: the solve took no exploration and one fix.
 
