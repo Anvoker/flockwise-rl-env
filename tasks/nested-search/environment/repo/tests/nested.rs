@@ -11,11 +11,12 @@ use rand::rngs::StdRng;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// The inner search can be built on its own and handed over as a value.
-fn inner_search(problem: Problem) -> impl Search<Pos = T, Outer = W> + Clone + Send {
+/// The inner search can be built on its own and handed over as a value. Its
+/// components borrow the problem instead of copying it.
+fn inner_search(problem: &Problem) -> impl Search<Pos = T, Outer = W> + Clone + Send {
     Swarm1::new(
-        objective(move |w| inner_fit(problem, w)),
-        Confined::new(PsoRule::new(CONFIG), region(move |w| t_bounds(problem, w))),
+        objective(move |w| inner_fit(*problem, w)),
+        Confined::new(PsoRule::new(CONFIG), region(move |w| t_bounds(*problem, w))),
     )
 }
 
@@ -23,7 +24,7 @@ fn solve(problem: Problem, seed: u64) -> W {
     let mut outer = Swarm2::new(
         objective(move |_| outer_fit(problem)),
         Confined::new(PsoRule::new(CONFIG), region(move |_| x_bounds(problem))).for_field::<X>(),
-        InnerSearch::new(30, inner_search(problem), seeder(t_init(problem, 10))),
+        InnerSearch::new(30, inner_search(&problem), seeder(t_init(problem, 10))),
     );
 
     let mut rng = StdRng::seed_from_u64(seed);

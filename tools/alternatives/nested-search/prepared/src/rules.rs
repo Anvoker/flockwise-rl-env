@@ -1,7 +1,7 @@
 use crate::api::{BestSoFar, ParticleView, ReadFrom, SplitFrom, WriteInto};
 use crate::components::{Confine, Move, Region, Rule, Seeder};
 use crate::search::{Search, Steps, particle_rngs};
-use rand::{Rng, RngCore};
+use rand::{Rng, RngCore, SeedableRng};
 use std::marker::PhantomData;
 
 /// Confines a rule's result to a region.
@@ -144,8 +144,13 @@ where
     fn apply(&self, _best: &BestSoFar<D::Outer>, rng: &mut dyn RngCore, p: ParticleView<'_, D::Outer>) {
         let outer = *p.pos;
         let mut ready = self.search.prepare(outer);
-        let mut particles = self.seeder.seed(outer, rng);
-        let mut rngs = particle_rngs(rng.random(), particles.len());
+        // The seeder gets its own stream: this rule's stream lasts the whole
+        // run, so whatever the seeder drew from it would shift every later
+        // inner search's seed.
+        let seed = rng.random();
+        let mut seeder_rng = rand::rngs::StdRng::seed_from_u64(rng.random());
+        let mut particles = self.seeder.seed(outer, &mut seeder_rng);
+        let mut rngs = particle_rngs(seed, particles.len());
 
         let mut best = None;
         for _ in 0..self.iterations {

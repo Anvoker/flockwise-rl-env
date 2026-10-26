@@ -1,7 +1,6 @@
 use crate::api::{BestSoFar, Particle, ParticleView, Point};
 use crate::components::{Move, Objective, Rule, Score};
-use crate::search::{Search, Steps};
-use rand::rngs::StdRng;
+use crate::search::{Search, Steps, Streams};
 use rand::{Rng, RngCore};
 use rayon::prelude::*;
 use std::marker::PhantomData;
@@ -114,19 +113,19 @@ where
 
 /// The prepared rules of a swarm, applied in order.
 pub trait Rules<P>: Send + Sync {
-    fn apply_all(&self, best: &BestSoFar<P>, rng: &mut dyn RngCore, p: &mut Particle<P>);
+    fn apply_all(&self, best: &BestSoFar<P>, rngs: &mut Streams, p: &mut Particle<P>);
 }
 
 impl<P: Copy, A: Move<P>> Rules<P> for (A,) {
-    fn apply_all(&self, best: &BestSoFar<P>, rng: &mut dyn RngCore, p: &mut Particle<P>) {
-        self.0.apply(best, rng, p.view());
+    fn apply_all(&self, best: &BestSoFar<P>, rngs: &mut Streams, p: &mut Particle<P>) {
+        self.0.apply(best, &mut rngs[0], p.view());
     }
 }
 
 impl<P: Copy, A: Move<P>, B: Move<P>> Rules<P> for (A, B) {
-    fn apply_all(&self, best: &BestSoFar<P>, rng: &mut dyn RngCore, p: &mut Particle<P>) {
-        self.0.apply(best, rng, p.view());
-        self.1.apply(best, rng, p.view());
+    fn apply_all(&self, best: &BestSoFar<P>, rngs: &mut Streams, p: &mut Particle<P>) {
+        self.0.apply(best, &mut rngs[0], p.view());
+        self.1.apply(best, &mut rngs[1], p.view());
     }
 }
 
@@ -153,7 +152,7 @@ where
     Rs: Rules<P>,
     P: Point,
 {
-    fn step(&mut self, particles: &mut [Particle<P>], rngs: &mut [StdRng]) -> BestSoFar<P> {
+    fn step(&mut self, particles: &mut [Particle<P>], rngs: &mut [Streams]) -> BestSoFar<P> {
         let objective = &self.objective;
         particles.par_iter_mut().for_each(|p| p.score = objective.score(p.pos));
 
@@ -181,7 +180,7 @@ where
         particles
             .par_iter_mut()
             .zip(rngs.par_iter_mut())
-            .for_each(|(p, rng)| rules.apply_all(best, rng, p));
+            .for_each(|(p, rngs)| rules.apply_all(best, rngs, p));
 
         self.best
     }

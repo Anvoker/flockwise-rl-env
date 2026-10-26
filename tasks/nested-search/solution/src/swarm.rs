@@ -1,7 +1,6 @@
 use crate::api::{BestSoFar, Particle, ParticleView, Point};
 use crate::components::{Objective, OuterAware, Rule};
-use crate::search::Search;
-use rand::rngs::StdRng;
+use crate::search::{Search, stream};
 use rand::{Rng, RngCore};
 use rayon::prelude::*;
 use std::marker::PhantomData;
@@ -99,12 +98,12 @@ where
         self.best = BestSoFar::new();
     }
 
-    fn step(&mut self, particles: &mut [Particle<Self::Pos>], rngs: &mut [StdRng]) -> BestSoFar<Self::Pos> {
+    fn step(&mut self, particles: &mut [Particle<Self::Pos>], seed: u64, iteration: u64) -> BestSoFar<Self::Pos> {
         score_all(&self.objective, &mut self.best, particles);
 
         let (best, r1) = (&self.best, &self.r1);
-        particles.par_iter_mut().zip(rngs.par_iter_mut()).for_each(|(p, rng)| {
-            r1.apply(best, rng, p.view());
+        particles.par_iter_mut().enumerate().for_each(|(i, p)| {
+            r1.apply(best, &mut stream(seed, iteration, i, 0), p.view());
         });
 
         self.best
@@ -123,13 +122,15 @@ where
         self.best = BestSoFar::new();
     }
 
-    fn step(&mut self, particles: &mut [Particle<Self::Pos>], rngs: &mut [StdRng]) -> BestSoFar<Self::Pos> {
+    fn step(&mut self, particles: &mut [Particle<Self::Pos>], seed: u64, iteration: u64) -> BestSoFar<Self::Pos> {
         score_all(&self.objective, &mut self.best, particles);
 
+        // Each rule has its own stream, so what one draws never changes what
+        // the other receives.
         let (best, r1, r2) = (&self.best, &self.r1, &self.r2);
-        particles.par_iter_mut().zip(rngs.par_iter_mut()).for_each(|(p, rng)| {
-            r1.apply(best, rng, p.view());
-            r2.apply(best, rng, p.view());
+        particles.par_iter_mut().enumerate().for_each(|(i, p)| {
+            r1.apply(best, &mut stream(seed, iteration, i, 0), p.view());
+            r2.apply(best, &mut stream(seed, iteration, i, 1), p.view());
         });
 
         self.best

@@ -129,16 +129,40 @@ MUTANTS = {
         [
             (
                 "swarm.rs",
-                "        particles.par_iter_mut().zip(rngs.par_iter_mut()).for_each(|(p, rng)| {" + NL + "            r1.apply(best, rng, p.view());" + NL + "        });",
-                "        let shared = std::sync::Mutex::new(rngs[0].clone());" + NL + "        particles.par_iter_mut().for_each(|p| {" + NL + "            let mut rng = shared.lock().unwrap();" + NL + "            r1.apply(best, &mut *rng, p.view());" + NL + "        });",
+                "        particles.par_iter_mut().enumerate().for_each(|(i, p)| {" + NL + "            r1.apply(best, &mut stream(seed, iteration, i, 0), p.view());" + NL + "        });",
+                "        let shared = std::sync::Mutex::new(stream(seed, iteration, 0, 0));" + NL + "        particles.par_iter_mut().for_each(|p| {" + NL + "            let mut rng = shared.lock().unwrap();" + NL + "            r1.apply(best, &mut *rng, p.view());" + NL + "        });",
                 1,
             ),
             (
                 "swarm.rs",
-                "        particles.par_iter_mut().zip(rngs.par_iter_mut()).for_each(|(p, rng)| {" + NL + "            r1.apply(best, rng, p.view());" + NL + "            r2.apply(best, rng, p.view());" + NL + "        });",
-                "        let shared = std::sync::Mutex::new(rngs[0].clone());" + NL + "        particles.par_iter_mut().for_each(|p| {" + NL + "            let mut rng = shared.lock().unwrap();" + NL + "            r1.apply(best, &mut *rng, p.view());" + NL + "            r2.apply(best, &mut *rng, p.view());" + NL + "        });",
+                "        particles.par_iter_mut().enumerate().for_each(|(i, p)| {" + NL + "            r1.apply(best, &mut stream(seed, iteration, i, 0), p.view());" + NL + "            r2.apply(best, &mut stream(seed, iteration, i, 1), p.view());" + NL + "        });",
+                "        let shared = std::sync::Mutex::new(stream(seed, iteration, 0, 0));" + NL + "        particles.par_iter_mut().for_each(|p| {" + NL + "            let mut rng = shared.lock().unwrap();" + NL + "            r1.apply(best, &mut *rng, p.view());" + NL + "            r2.apply(best, &mut *rng, p.view());" + NL + "        });",
                 1,
             ),
+        ],
+    ),
+    "one_stream_per_particle": (
+        "A swarm's two rules draw from one stream per particle, so what the first draws shifts the second",
+        [(
+            "swarm.rs",
+            "            r1.apply(best, &mut stream(seed, iteration, i, 0), p.view());" + NL + "            r2.apply(best, &mut stream(seed, iteration, i, 1), p.view());",
+            "            let mut rng = stream(seed, iteration, i, 0);" + NL + "            r1.apply(best, &mut rng, p.view());" + NL + "            r2.apply(best, &mut rng, p.view());",
+            1,
+        )],
+    ),
+    "inner_seed_after_seeder": (
+        "The inner search's seed is drawn after the seeder ran, so what the seeder draws changes it",
+        [(
+            "rules.rs",
+            "        let seed = rng.random::<u64>();" + NL + "        let mut particles = self.seeder.seed(*p.pos, rng);",
+            "        let mut particles = self.seeder.seed(*p.pos, rng);" + NL + "        let seed = rng.random::<u64>();",
+            1,
+        )],
+    ),
+    "components_must_be_static": (
+        "Closure-built components must be 'static, so they can't borrow",
+        [
+            ("components.rs", "    F: Fn(O) -> G + Clone + Send + Sync," + NL + "    G: Fn(P) -> f64 + Send + Sync," + NL + "    O: Copy + Send + Sync," + NL + "    P: Point," + NL + "{" + NL + "    ObjectiveFn(", "    F: Fn(O) -> G + Clone + Send + Sync + 'static," + NL + "    G: Fn(P) -> f64 + Send + Sync," + NL + "    O: Copy + Send + Sync," + NL + "    P: Point," + NL + "{" + NL + "    ObjectiveFn(", 1),
         ],
     ),
     "all_sequential": (

@@ -4,8 +4,9 @@ mod common;
 
 use common::*;
 use flockwise::*;
-use rand::SeedableRng;
 use rand::rngs::StdRng;
+use rand::{Rng, RngCore, SeedableRng};
+use std::sync::{Arc, Mutex};
 
 vector_unit!(V, 4);
 
@@ -83,5 +84,53 @@ fn personal_bests_after_one_iteration_are_the_starting_positions() {
         assert_eq!(p.best_pos, *start);
         assert_eq!(p.best_score, score(*start));
         assert_ne!(p.pos, *start, "every particle moved");
+    }
+}
+
+/// A rule that moves nothing and logs particles it picks at random, about
+/// one in `every`.
+fn sampling_logger(every: u32, log: Arc<Mutex<Vec<V>>>) -> impl Fn(&BestSoFar<V>, &mut dyn RngCore, ParticleView<'_, V>) + Clone + Send + Sync {
+    move |_: &BestSoFar<V>, rng: &mut dyn RngCore, p: ParticleView<'_, V>| {
+        if rng.random_ratio(1, every) {
+            log.lock().unwrap().push(*p.pos);
+        }
+    }
+}
+
+/// Swapping a rule that draws no random numbers for one that does changes
+/// nothing else in the run.
+#[test]
+fn logging_at_random_does_not_change_the_run() {
+    let center = [1.0, -4.0, 2.5, 7.0];
+    let run = |logger: Option<u32>| {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let observer = {
+            let log = log.clone();
+            rule(move |_| {
+                let log = log.clone();
+                move |best: &BestSoFar<V>, rng: &mut dyn RngCore, p: ParticleView<'_, V>| {
+                    if let Some(every) = logger {
+                        sampling_logger(every, log.clone())(best, rng, p);
+                    }
+                }
+            })
+        };
+        let mut searcher = Swarm2::new(
+            objective(move |_| sphere(center)),
+            observer,
+            Confined::new(PsoRule::new(CONFIG), region(|_| box100)),
+        );
+        let mut rng = StdRng::seed_from_u64(9);
+        let mut group = start(&mut rng, 12);
+        let bests: Vec<BestSoFar<V>> = Run::new(20, &mut searcher, &mut group, 9).collect();
+        let logged = log.lock().unwrap().len();
+        (bests, group, logged)
+    };
+
+    let (quiet_bests, quiet_group, _) = run(None);
+    for every in [2, 5] {
+        let (bests, group, logged) = run(Some(every));
+        assert!(logged > 0, "the logger never logged");
+        assert!(bests == quiet_bests && group == quiet_group, "logging one particle in {every} changed the run");
     }
 }

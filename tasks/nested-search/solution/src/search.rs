@@ -1,7 +1,7 @@
 use crate::api::{BestSoFar, Particle, Point};
 use crate::components::OuterAware;
+use rand::SeedableRng;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
 
 /// A search over positions of type `Pos`, run for the particle of an
 /// enclosing search (`Outer`), or for `()` at the top level.
@@ -11,43 +11,49 @@ pub trait Search: OuterAware + Clone + Send + Sync {
     /// Forgets everything from earlier runs.
     fn begin(&mut self);
 
-    /// Runs one iteration over the swarm and returns the best so far.
-    /// `rngs[i]` belongs to `particles[i]`.
-    fn step(&mut self, particles: &mut [Particle<Self::Pos>], rngs: &mut [StdRng]) -> BestSoFar<Self::Pos>;
+    /// Runs iteration `iteration` of a run seeded with `seed`, and returns
+    /// the best so far.
+    fn step(&mut self, particles: &mut [Particle<Self::Pos>], seed: u64, iteration: u64) -> BestSoFar<Self::Pos>;
+}
+
+fn mix(mut z: u64) -> u64 {
+    z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// The random stream one rule gets for one particle in one iteration. Every
+/// (rule, particle, iteration) has its own, so what one component draws never
+/// changes what another receives, and the work can be split between threads
+/// in any way.
+pub(crate) fn stream(seed: u64, iteration: u64, particle: usize, slot: u64) -> StdRng {
+    StdRng::seed_from_u64(mix(mix(mix(mix(seed) ^ iteration) ^ particle as u64) ^ slot))
 }
 
 /// Runs a top-level search for a fixed number of iterations, yielding the
-/// best so far after each one. Each particle gets its own random stream,
-/// derived from `seed` and the particle's index, so the results don't depend
-/// on how the work is split between threads.
+/// best so far after each one.
 pub struct Run<'a, S: Search> {
-    iterations: usize,
-    done: usize,
+    iterations: u64,
+    done: u64,
+    seed: u64,
     search: &'a mut S,
     particles: &'a mut [Particle<S::Pos>],
-    rngs: Vec<StdRng>,
 }
 
 impl<'a, S: Search<Outer = ()>> Run<'a, S> {
     pub fn new(iterations: usize, search: &'a mut S, particles: &'a mut [Particle<S::Pos>], seed: u64) -> Self {
         search.begin();
         search.see_outer(());
-        let rngs = particle_rngs(seed, particles.len());
 
         Run {
-            iterations,
+            iterations: iterations as u64,
             done: 0,
+            seed,
             search,
             particles,
-            rngs,
         }
     }
-}
-
-/// One random stream per particle, from a master stream seeded with `seed`.
-pub(crate) fn particle_rngs(seed: u64, count: usize) -> Vec<StdRng> {
-    let mut master = StdRng::seed_from_u64(seed);
-    (0..count).map(|_| StdRng::seed_from_u64(master.random())).collect()
 }
 
 /// Runs a search to the end and returns its last best so far.
@@ -57,8 +63,7 @@ pub(crate) fn run_to_end<S: Search>(
     particles: &mut [Particle<S::Pos>],
     seed: u64,
 ) -> Option<BestSoFar<S::Pos>> {
-    let mut rngs = particle_rngs(seed, particles.len());
-    (0..iterations).map(|_| search.step(particles, &mut rngs)).last()
+    (0..iterations as u64).map(|i| search.step(particles, seed, i)).last()
 }
 
 impl<S: Search> Iterator for Run<'_, S> {
@@ -69,7 +74,8 @@ impl<S: Search> Iterator for Run<'_, S> {
             return None;
         }
 
+        let best = self.search.step(self.particles, self.seed, self.done);
         self.done += 1;
-        Some(self.search.step(self.particles, &mut self.rngs))
+        Some(best)
     }
 }
