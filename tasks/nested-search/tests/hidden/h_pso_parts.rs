@@ -19,12 +19,9 @@ fn one() -> W {
 #[test]
 fn random_factors_differ_across_fields() {
     for seed in 0..10 {
-        // Particle 0 starts at zero with a better personal best at `one`, and
-        // particle 1 sits at `one`, the swarm's best.
-        let mut me = Particle::new(W::default(), W::default());
-        me.best_pos = one();
-        me.best_score = f64::INFINITY;
-        let mut group = vec![me, Particle::new(one(), W::default())];
+        // Particle 0 starts at zero, and particle 1 sits at `one`, the swarm's
+        // best, so particle 0 is pulled by `social * r2` in every coordinate.
+        let mut group = vec![Particle::new(W::default(), W::default()), Particle::new(one(), W::default())];
         let target = one();
         let mut search = Swarm1::new(
             objective(move |_| move |w: W| -sq_dist(w.x.0, target.x.0) - sq_dist(w.t.0, target.t.0)),

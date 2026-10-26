@@ -6,6 +6,7 @@ mod common;
 
 use common::*;
 use flockwise::*;
+use rand::RngCore;
 
 vector_unit!(V, 6);
 
@@ -33,33 +34,34 @@ fn at_both_bests_only_inertia_remains() {
     assert_eq!(group[0].pos, x + v * 0.5);
 }
 
-/// The pull towards the personal best alone: the particle is the swarm's best
-/// but remembers a better personal best from before.
+/// Both pulls at once. A rule written by the user first moves the particle
+/// one unit below its best position, which is both its personal best and the
+/// swarm's, so each coordinate's pull is `cognitive * r1 + social * r2`, in
+/// [0, 3.5). It sometimes comes close to that only if both weights are used.
 #[test]
-fn the_cognitive_pull_follows_the_formula() {
+fn both_pulls_follow_the_formula() {
     let mut largest = 0.0f64;
     for seed in 0..20 {
-        let x = V([0.0; 6]);
+        let x = V([1.0; 6]);
         let v = V([0.2, -0.2, 0.4, 0.0, -0.4, 0.1]);
-        let mut me = Particle::new(x, v);
-        me.best_pos = V([1.0; 6]);
-        me.best_score = f64::INFINITY;
-        let other = Particle::new(V([5.0; 6]), V::default());
-        let mut group = vec![me, other];
-        one_step([0.0; 6], &mut group, seed);
+        let mut group = vec![Particle::new(x, v)];
+        let step_down = rule(|_| |_: &BestSoFar<V>, _: &mut dyn RngCore, p: ParticleView<'_, V>| {
+            *p.pos = *p.pos - V([1.0; 6]);
+        });
+        let mut search = Swarm2::new(objective(|_| |p: V| -sq_dist(p.0, [1.0; 6])), step_down, PsoRule::new(CFG));
+        Run::new(1, &mut search, &mut group, seed).for_each(drop);
 
         let p = group[0];
-        assert_eq!(p.best_pos, V([1.0; 6]), "a better personal best is kept");
-        assert_eq!(p.pos, x + p.vel);
+        assert_eq!(p.pos, V([0.0; 6]) + p.vel);
         for i in 0..6 {
             let pull = p.vel.0[i] - 0.5 * v.0[i];
-            assert!((0.0..1.5).contains(&pull), "seed {seed}: coordinate {i} pulled by {pull}, outside [0, 1.5)");
+            assert!((0.0..3.5).contains(&pull), "seed {seed}: coordinate {i} pulled by {pull}, outside [0, 3.5)");
             largest = largest.max(pull);
         }
         let first = p.vel.0[0] - 0.5 * v.0[0];
-        assert!((1..6).any(|i| p.vel.0[i] - 0.5 * v.0[i] != first), "seed {seed}: the same factor in every coordinate");
+        assert!((1..6).any(|i| p.vel.0[i] - 0.5 * v.0[i] != first), "seed {seed}: the same factors in every coordinate");
     }
-    assert!(largest > 1.2, "the cognitive pull never came near its weight: at most {largest}");
+    assert!(largest > 2.7, "the pulls never came near their combined weight: at most {largest}");
 }
 
 /// The pull towards the swarm's best alone: the particle is at its own best,
