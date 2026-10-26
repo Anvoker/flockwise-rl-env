@@ -25,10 +25,24 @@ rm -rf "$checks" && mkdir -p "$checks"
 cp "$work/app/compile_checks/"*.rs "$task/tests/compile_checks/"*.rs "$checks/"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$work/target}"
 cd "$work/app"
+# Builds one test file, then runs its binary with a time limit, so a
+# deadlocked solution fails that file instead of stalling the verifier.
+# Usage: run_test <name> [test binary args...]
+run_test() {
+    local out status exe
+    out=$(cargo test --release --offline --test "$1" --no-run 2>&1)
+    status=$?
+    echo "$out"
+    [ "$status" -eq 0 ] || return "$status"
+    exe=$(echo "$out" | sed -n 's/^ *Executable .*(\(.*\))$/\1/p' | tail -1)
+    [ -n "$exe" ] || return 1
+    timeout -k 10 "${TEST_TIMEOUT:-180}" "$exe" "${@:2}"
+}
+
 failed=0
 for file in tests/*.rs; do
     name=$(basename "$file" .rs)
-    if cargo test --release --offline --test "$name" >"$work/test_$name.log" 2>&1; then
+    if run_test "$name" >"$work/test_$name.log" 2>&1; then
         echo "pass  test_$name"
     else
         echo "FAIL  test_$name"

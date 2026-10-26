@@ -33,23 +33,38 @@ record() { # name status
     results="$results\"$1\": $([ "$2" -eq 0 ] && echo 1 || echo 0), "
 }
 
+# Builds one test file, then runs its binary with a time limit, so a
+# deadlocked solution fails that file instead of stalling the verifier.
+# Usage: run_test <name> [test binary args...]
+run_test() {
+    local out status exe
+    out=$(cargo test --release --offline --test "$1" --no-run 2>&1)
+    status=$?
+    echo "$out"
+    [ "$status" -eq 0 ] || return "$status"
+    exe=$(echo "$out" | sed -n 's/^ *Executable .*(\(.*\))$/\1/p' | tail -1)
+    [ -n "$exe" ] || return 1
+    timeout -k 10 "${TEST_TIMEOUT:-180}" "$exe" "${@:2}"
+}
+
 # Each test file is compiled on its own, so one that doesn't compile can't
 # hide the results of the others.
 for file in tests/*.rs; do
     name=$(basename "$file" .rs)
-    cargo test --release --offline --test "$name" >"$LOGS/test_$name.log" 2>&1
+    run_test "$name" >"$LOGS/test_$name.log" 2>&1
     record "test_$name" $?
 done
 
 ./compile_checks/run.sh . "$checks" >"$LOGS/compile_checks.log" 2>&1
 record compile_checks $?
 
-cargo +"$MIRI_TOOLCHAIN" miri test --offline --test miri >"$LOGS/miri.log" 2>&1
+# Same flags as ci.sh: crossbeam-epoch (under rayon) breaks Stacked Borrows,
+# and rayon's pool threads outlive the test.
+MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-ignore-leaks" timeout -k 10 900 cargo +"$MIRI_TOOLCHAIN" miri test --offline --test miri >"$LOGS/miri.log" 2>&1
 record miri $?
 
 # Reported, not scored: how much faster 8 threads are than 1.
-cargo test --release --offline --test h_parallel -- --ignored --nocapture speedup_report \
-    >"$LOGS/speedup.log" 2>&1
+run_test h_parallel --ignored --nocapture speedup_report >"$LOGS/speedup.log" 2>&1
 speedup=$(grep -o 'SPEEDUP_8_VS_1 [0-9.]*' "$LOGS/speedup.log" | cut -d' ' -f2)
 results="$results\"speedup_8_vs_1 (not scored)\": ${speedup:-null}, "
 

@@ -1,5 +1,5 @@
 //! A small nested composition, sized to run under Miri:
-//! `cargo +nightly miri test --test miri`
+//! `MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-ignore-leaks" cargo +nightly miri test --test miri`
 
 mod common;
 
@@ -44,8 +44,11 @@ fn small_nested_search_runs() {
     let mut group_a = initial_group(&problem, 3, &mut rng);
     let mut group_b = group_a.clone();
 
-    let best_a = Run::new(3, &mut a, &mut group_a, 7).last().unwrap();
-    let best_b = Run::new(3, &mut b, &mut group_b, 7).last().unwrap();
+    // Two worker threads, so Miri's data race detector has something to
+    // check. (Under Miri the global pool would have only one.)
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(2).build().unwrap();
+    let best_a = pool.install(|| Run::new(3, &mut a, &mut group_a, 7).last().unwrap());
+    let best_b = pool.install(|| Run::new(3, &mut b, &mut group_b, 7).last().unwrap());
     assert!(best_a.best_score.is_finite());
     assert_eq!(best_a, best_b);
 }

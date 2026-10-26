@@ -15,7 +15,9 @@ category = "software-engineering"
 difficulty_explanation = "The starting design borrows its parts and builds inner searches from function pointers. Making it composable needs owned components, context threaded through wrappers and nesting levels, and APIs that infer every type from the arguments."
 
 [verifier]
-timeout_sec = 1800
+# Each test file also has a 3-minute limit (tests/test.sh), so a solution that
+# deadlocks fails cleanly instead of running into this one.
+timeout_sec = 3600
 environment_mode = "separate"
 
 [verifier.environment]

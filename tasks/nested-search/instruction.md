@@ -50,6 +50,8 @@ User code never names anything else from the library, and never spells out the l
 
 1. `cargo test --release`.
 2. The compile checks in `compile_checks/`: each case must compile in its `//CASE` form and fail to compile in its `//FAIL` form, so mismatched compositions are rejected by the type system.
-3. A small composition under Miri (`cargo +$MIRI_TOOLCHAIN miri test --test miri`), which fails on undefined behaviour, data races included.
+3. A small composition under Miri, with the flags `ci.sh` sets (`-Zmiri-tree-borrows -Zmiri-ignore-leaks`, because of rayon's internals), which fails on undefined behaviour, data races included.
+
+Each test file must finish within 3 minutes (the reference solution takes a few seconds).
 
 The verifier runs the same three steps with more tests: other compositions of the same components, such as three levels of nesting, swapped roles and field orders, components written outside the library, components that record every outer position they're shown and count their calls, searches cloned and run side by side, searches moved to other threads, results compared across thread counts, the threads that do the work recorded, ties between particles, other route scenarios, and more compile checks for mismatched compositions. It also reports how much faster 8 threads are than 1, without scoring it.
