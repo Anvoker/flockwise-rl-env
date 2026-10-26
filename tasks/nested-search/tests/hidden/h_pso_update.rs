@@ -16,7 +16,7 @@ const CFG: PsoParams = PsoParams {
 };
 
 /// Runs one iteration of a PSO swarm that maximizes `-|v - target|^2`.
-fn one_step(target: [f64; 6], group: &mut [Particle<V>], seed: u64) {
+fn one_step(target: [f64; 6], group: &mut Vec<Particle<V>>, seed: u64) {
     let mut search = Swarm1::new(objective(move |_| move |v: V| -sq_dist(v.0, target)), PsoRule::new(CFG));
     Run::new(1, &mut search, group, seed).for_each(drop);
 }

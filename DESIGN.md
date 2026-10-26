@@ -55,6 +55,43 @@ Version 2 was solved just as fast as v1 (6 turns). As agreed beforehand, task 2,
 
 Every run must also return a feasible route, within a tolerance of 0.001. A stricter tolerance (0.000001) caused false failures: the objective penalizes zone intrusion at 1,000 per unit, so cutting a corner by 0.0001 costs only 0.1 points and saves distance, and the optimizer takes it. The largest cut seen in 6,000 plans was about 0.00012. The timing threshold in C was also moved from −10.5 to −11.0 after one false failure in 1,000 runs, which still leaves it about 1 point above the fastest-timings mode.
 
+### Version 4: the agent designs the architecture (2026-10-26)
+
+Version 3 was solved just as easily (9 turns). Every version so far handed the agent the design: `api.rs` held the author's traits (`OuterAware`, `Objective`, `Rule`, ...), and the task was to implement them. In February the hard part was finding that design, not writing it. Version 4 takes the design away and fixes only what a user of the library writes.
+
+**What's fixed.**
+
+- **The call sites.** Components are built from closures: `objective(f)`, `region(f)`, `rule(f)`, `seeder(f)`. Each closure is given the *outer position* (the position of the particle its search runs for, `()` at the top level) and returns what the component uses during that search. The library's own components (`PsoRule`, `Swarm1`, `Swarm2`, `Confined`, `for_field`, `InnerSearch`, `Run`) keep their v3 call shapes. Users name searches as `impl Search<Pos = P, Outer = O>`.
+- **The preparation contract.** A component's closure is called exactly once for every search it takes part in, with that search's outer position, before the search scores anything. What it returns serves that search and no other.
+- **`api.rs` shrinks to data:** positions (`Point`), particles, `BestSoFar`, and the three field declarations. No behaviour trait is given.
+- **The route model no longer implements library traits.** It offers plain domain methods (`score`, `confine_waypoints`, `leg_limits`, `random_timings`, ...), and the planner wires them into closures. `leg_limits` computes a route's points once, which is exactly the kind of per-search preparation the contract exists for.
+
+**How the author's design properties are forced without describing them.**
+
+| Property of the author's design | What forces it | Checked by |
+|---|---|---|
+| Components are owned values | Compositions are built in helper functions, returned as `impl Search`, stored, cloned, and moved to threads | `h_values` |
+| Every component accepts the outer position, and those that ignore it compose anywhere | Closures that ignore it (`objective(\|_\| ...)`) and the library's components appear in inner searches at every depth; the outer type is inferred from where a component is used | `h_context_mix` (all 8 combinations), compile checks |
+| Context is set before a search begins and fixed until it ends, on a fresh copy per search | The preparation contract | Recording closures count preparations (exactly one per search, for the right outer position) and check that each component is prepared before it's used: `h_record`, `h_three_levels`, `h_swapped_other`, visible `nested.rs` |
+| Nesting recurses; each level sees the level directly above | Three-level compositions | `h_three_levels` |
+| Types are inferred from the arguments | Hidden call sites never name library types; closure parameters are annotated only with public and user types | every hidden test |
+| Mismatched compositions are type errors | Compile checks, now also for a search that needs an outer position being run at the top level | `compile_checks/` |
+| Per-particle randomness, so results don't depend on threads | Bit-identical results across thread counts | `h_parallel` |
+
+The instruction never mentions `OuterAware`, `see_outer`, associated versus generic outer types, cloning per particle, preparing into separate values, per-particle random streams or a serial reduction. Each of those is a design decision left to the agent.
+
+**Fairness: a second, independent design passes the verifier.** `tools/alternatives/nested-search/prepared/` differs from the reference on every axis that matters. The outer position is a trait *parameter* (`Rule<O>`), so context-free components need no phantom type. Preparing a component builds a separate value (`Rule::Ready`) instead of setting state on a fresh clone. The constructors have no bounds at all, which checks that the hidden tests don't depend on how the agent writes them. Random streams come from a hash of the seed and the particle index, and the best so far from a parallel reduction. The reference planner compiles against it unchanged. It passes every check, and its false-failure rate is measured like the reference's.
+
+Other fairness decisions:
+
+- The PSO formula is now stated in the instruction, because the visible test that pinned it is hidden. The hidden test can no longer inject a fixed RNG into a rule, since rules' interfaces are the agent's. Instead it checks the formula through one-iteration runs: exact inertia when a particle sits at both bests, and the cognitive and social pulls isolated and bounded per coordinate.
+- The instruction states that closures and what they return are `Clone + Send + Sync`, and the tests only use such closures.
+- The rule closure's signature is fixed (`Fn(&BestSoFar<P>, &mut dyn RngCore, ParticleView<'_, P>)`), so user rules can take randomness without knowing the library's RNG type.
+
+**The earlier lesson, refined.** Version 1 concluded that "a verifier with hidden tests needs a fixed public API, so the task author has to make the API's design decisions". That holds for the API users *call*, not for the traits behind it. With closures, every user component takes the outer position in its signature and ignores it with `|_|`, so the coherence problem the author met in February (components that may or may not take context) moves inside the library, where the agent has to solve it.
+
+**Calibration plan for v4 (decided 2026-10-26 18:40):** Claude Haiku 5.5 and Claude Sonnet 5.5, one attempt each, 30-minute agent cap (halved from v1-v3's hour, so a model that flails doesn't burn tokens).
+
 ### What the change makes possible
 
 Each capability below was impossible in the starting state. Verification is built from this list: each one is proven by code that compiles and runs, not by inspecting the agent's source.

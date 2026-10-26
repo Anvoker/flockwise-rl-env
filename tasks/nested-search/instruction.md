@@ -42,7 +42,7 @@ Users only know these names, all exported from the crate root unless noted, and 
 - `objective`, `region`, `rule` and `seeder`, as above.
 - `PsoParams` (with public fields `inertia`, `cognitive`, `social`), `PsoRule::new(params)`, `Swarm1::new(objective, rule)`, `Swarm2::new(objective, rule1, rule2)` (rules applied in that order), `Confined::new(rule, region)`, `rule.for_field::<Field>()`, `InnerSearch::new(iterations, inner_search, seeder)`.
 - The `Search` trait, with associated types `Pos` and `Outer`, which every search implements.
-- `Run::new(iterations, &mut search, &mut particles, seed)`: runs a search that isn't nested (`Outer = ()`), as an iterator over the best so far (`BestSoFar`) after each iteration.
+- `Run::new(iterations, &mut search, &mut particles, seed)`, where `particles` is a `Vec<Particle<Pos>>`: runs a search that isn't nested (`Outer = ()`), as an iterator over the best so far (`BestSoFar`) after each iteration. Afterwards, `particles` holds the particles' final state.
 - `routes::plan`, `routes::Budget`, and everything in `routes::model`.
 
 User code never names anything else from the library, and never spells out the library's type parameters. The only types users write at a call site are their own and the ones listed above: a field, as in `for_field::<X>()`, and the types of closure parameters. Everything else is inferred from the arguments.
