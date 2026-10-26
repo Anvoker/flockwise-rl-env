@@ -1,13 +1,13 @@
 // The inner search expects context X, but its outer particles are W.
 fn main() {
-    let inner = GBestSearcherOne::new(
+    let inner = Swarm1::new(
         //CASE FitOn::<T, W>::new(),
         //FAIL FitOn::<T, X>::new(),
-        GBestSinglePMover::new(cfg(), rng()),
+        PsoRule::new(cfg(), rng()),
     );
-    let _ = GBestSearcherTwo::new(
+    let _ = Swarm2::new(
         FitOn::<W, ()>::new(),
-        GBestSinglePMover::new(cfg(), rng()).on_part::<X>(),
-        NestedMover::new(5, inner, InitFor::<W, T>::new(), rng()),
+        PsoRule::new(cfg(), rng()).for_field::<X>(),
+        InnerSearch::new(5, inner, InitFor::<W, T>::new(), rng()),
     );
 }

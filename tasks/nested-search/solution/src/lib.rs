@@ -1,9 +1,10 @@
 mod api;
-mod gbest;
-mod movers;
-mod searcher;
+pub mod routes;
+mod rules;
+mod search;
+mod swarm;
 
 pub use api::*;
-pub use gbest::*;
-pub use movers::*;
-pub use searcher::*;
+pub use rules::*;
+pub use search::*;
+pub use swarm::*;

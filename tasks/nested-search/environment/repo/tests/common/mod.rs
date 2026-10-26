@@ -1,8 +1,8 @@
-//! Unit types and problems shared by the tests. Written by users of the
+//! Point types and problems shared by the tests. Written by users of the
 //! library: only the library's public names are used.
 #![allow(dead_code)]
 
-use nestswarm::{Particle, SearchConfigGBest};
+use flockwise::{Particle, PsoParams};
 use rand::Rng;
 
 /// Defines a fixed-size vector unit: `vector_unit!(X, 3);`
@@ -45,7 +45,7 @@ macro_rules! vector_unit {
             }
         }
 
-        impl nestswarm::Unit for $name {
+        impl flockwise::Point for $name {
             fn map_scalars(self, mut f: impl FnMut(f64) -> f64) -> Self {
                 $name(self.0.map(|v| f(v)))
             }
@@ -84,36 +84,54 @@ macro_rules! pair_unit {
             }
         }
 
-        impl nestswarm::Unit for $name {
+        impl flockwise::Point for $name {
             fn map_scalars(self, mut f: impl FnMut(f64) -> f64) -> Self {
                 $name { $a: self.$a.map_scalars(&mut f), $b: self.$b.map_scalars(&mut f) }
             }
         }
 
-        impl nestswarm::PartOf<$name> for $ta {
-            fn get(whole: &$name) -> Self {
-                whole.$a
-            }
-            fn get_mut(whole: &mut $name) -> &mut Self {
-                &mut whole.$a
+        $crate::field_of!($name, $a: $ta);
+        $crate::field_of!($name, $b: $tb);
+    };
+}
+
+/// Declares that field `$f` of type `$ty` is part of `$whole`.
+#[macro_export]
+macro_rules! field_of {
+    ($whole:ident, $f:ident : $ty:ty) => {
+        impl flockwise::SplitFrom for $ty {
+            type Whole = $whole;
+            fn split(w: flockwise::ParticleView<'_, $whole>) -> flockwise::ParticleView<'_, Self> {
+                flockwise::ParticleView {
+                    pos: &mut w.pos.$f,
+                    vel: &mut w.vel.$f,
+                    score: w.score,
+                    best_pos: &mut w.best_pos.$f,
+                    best_score: w.best_score,
+                }
             }
         }
 
-        impl nestswarm::PartOf<$name> for $tb {
-            fn get(whole: &$name) -> Self {
-                whole.$b
+        impl flockwise::ReadFrom for $ty {
+            type Whole = $whole;
+            fn read(whole: &$whole) -> Self {
+                whole.$f
             }
-            fn get_mut(whole: &mut $name) -> &mut Self {
-                &mut whole.$b
+        }
+
+        impl flockwise::WriteInto for $ty {
+            type Whole = $whole;
+            fn write(self, whole: &mut $whole) {
+                whole.$f = self;
             }
         }
     };
 }
 
-pub const CONFIG: SearchConfigGBest = SearchConfigGBest {
+pub const CONFIG: PsoParams = PsoParams {
     inertia: 0.7,
-    cognitive_coeff: 1.5,
-    social_coeff: 1.5,
+    cognitive: 1.5,
+    social: 1.5,
 };
 
 pub fn uniform<R: Rng + ?Sized, const K: usize>(rng: &mut R, lo: [f64; K], hi: [f64; K]) -> [f64; K] {
@@ -153,7 +171,7 @@ pub fn particles<T: Copy>(positions: Vec<(T, T)>) -> Vec<Particle<T>> {
 pub mod two_part;
 
 /// Offset added to every seed, so the numeric tests can be run over many
-/// seeds: `NESTSWARM_SEED_BASE=1000 cargo test`.
+/// seeds: `FLOCKWISE_SEED_BASE=1000 cargo test`.
 pub fn seed_base() -> u64 {
-    std::env::var("NESTSWARM_SEED_BASE").ok().and_then(|s| s.parse().ok()).unwrap_or(0)
+    std::env::var("FLOCKWISE_SEED_BASE").ok().and_then(|s| s.parse().ok()).unwrap_or(0)
 }

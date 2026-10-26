@@ -1,73 +1,60 @@
-use crate::api::{Contextful, GBest, Mover, Particle, ParticleMut, PartOf, Unit};
+use crate::api::{OuterAware, BestSoFar, Rule, Particle, ParticleView, Point};
 
-pub trait SolitaryMover {
-    type TUnit: Unit;
+pub trait SoloRule {
+    type Pos: Point;
 
-    fn update(&mut self, p: ParticleMut<'_, Self::TUnit>);
+    fn apply(&mut self, p: ParticleView<'_, Self::Pos>);
 }
 
-impl<T: SolitaryMover<TUnit = TUnit> + Contextful, TUnit: Unit> Mover for T {
-    type TUnit = TUnit;
-    type TCommon = ();
+impl<T: SoloRule<Pos = Pos> + OuterAware, Pos: Point> Rule for T {
+    type Pos = Pos;
+    type Shared = ();
 
-    fn update(&mut self, _common: &Self::TCommon, p: ParticleMut<'_, Self::TUnit>) {
-        SolitaryMover::update(self, p);
+    fn apply(&mut self, _shared: &Self::Shared, p: ParticleView<'_, Self::Pos>) {
+        SoloRule::apply(self, p);
     }
 }
 
-/// A view of one part of a particle.
-pub fn divide_from<TPart: PartOf<TWhole>, TWhole: Unit>(
-    source: ParticleMut<'_, TWhole>,
-) -> ParticleMut<'_, TPart> {
-    ParticleMut {
-        pos: TPart::get_mut(source.pos),
-        vel: TPart::get_mut(source.vel),
-        fit: source.fit,
-        best_pos: TPart::get_mut(source.best_pos),
-        best_fit: source.best_fit,
-    }
+pub trait Search {
+    type Pos: Point;
+
+    fn next(&mut self, particles: &mut [Particle<Self::Pos>]) -> &BestSoFar<Self::Pos>;
 }
 
-pub trait Searcher {
-    type TUnit: Unit;
-
-    fn next(&mut self, particles: &mut [Particle<Self::TUnit>]) -> &GBest<Self::TUnit>;
-}
-
-pub struct SearcherIter<'a, TUnit: Unit, TSearcher: Searcher<TUnit = TUnit>> {
-    max_iteration: usize,
+pub struct Run<'a, Pos: Point, S: Search<Pos = Pos>> {
+    iterations: usize,
     iteration: usize,
-    searcher: &'a mut TSearcher,
-    group: &'a mut [Particle<TUnit>],
+    search: &'a mut S,
+    particles: &'a mut [Particle<Pos>],
 }
 
-impl<'a, TUnit: Unit, TSearcher: Searcher<TUnit = TUnit>> SearcherIter<'a, TUnit, TSearcher> {
+impl<'a, Pos: Point, S: Search<Pos = Pos>> Run<'a, Pos, S> {
     pub fn new(
-        max_iteration: usize,
-        searcher: &'a mut TSearcher,
-        group: &'a mut [Particle<TUnit>],
+        iterations: usize,
+        search: &'a mut S,
+        particles: &'a mut [Particle<Pos>],
     ) -> Self {
-        SearcherIter {
-            max_iteration,
+        Run {
+            iterations,
             iteration: 0,
-            searcher,
-            group,
+            search,
+            particles,
         }
     }
 }
 
-impl<TUnit: Unit, TSearcher: Searcher<TUnit = TUnit>> Iterator
-    for SearcherIter<'_, TUnit, TSearcher>
+impl<Pos: Point, S: Search<Pos = Pos>> Iterator
+    for Run<'_, Pos, S>
 {
-    type Item = GBest<TUnit>;
+    type Item = BestSoFar<Pos>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.iteration += 1;
 
-        if self.iteration >= self.max_iteration {
+        if self.iteration >= self.iterations {
             None
         } else {
-            let r = self.searcher.next(self.group);
+            let r = self.search.next(self.particles);
             Some(*r)
         }
     }

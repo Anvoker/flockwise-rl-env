@@ -7,30 +7,30 @@ mod hidden_common;
 use common::two_part::*;
 use common::*;
 use hidden_common::*;
-use nestswarm::{
-    BoundedMover, Contextful, GBestSearcherOne, GBestSearcherTwo, GBestSinglePMover, NestedMover,
-    OnPart, Particle, Searcher, SearcherIter,
+use flockwise::{
+    Confined, OuterAware, Swarm1, Swarm2, PsoRule, InnerSearch,
+    ForField, Particle, Search, Run,
 };
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
-fn build(problem: Problem, seed: u64) -> impl Searcher<TUnit = W> + Contextful<TContext = ()> + Clone + Send {
-    let inner = GBestSearcherOne::new(
+fn build(problem: Problem, seed: u64) -> impl Search<Pos = W> + OuterAware<Outer = ()> + Clone + Send {
+    let inner = Swarm1::new(
         InnerFit::new(problem),
-        BoundedMover::new(
-            GBestSinglePMover::new(CONFIG, StdRng::seed_from_u64(seed)),
+        Confined::new(
+            PsoRule::new(CONFIG, StdRng::seed_from_u64(seed)),
             TBounds::new(problem),
         ),
     );
 
-    GBestSearcherTwo::new(
+    Swarm2::new(
         OuterFit(problem),
-        BoundedMover::new(
-            GBestSinglePMover::new(CONFIG, StdRng::seed_from_u64(seed + 1)),
+        Confined::new(
+            PsoRule::new(CONFIG, StdRng::seed_from_u64(seed + 1)),
             XBounds(problem),
         )
-        .on_part::<X>(),
-        NestedMover::new(20, inner, TInit { problem, count: 8 }, StdRng::seed_from_u64(seed + 2)),
+        .for_field::<X>(),
+        InnerSearch::new(20, inner, TInit { problem, count: 8 }, StdRng::seed_from_u64(seed + 2)),
     )
 }
 
@@ -53,7 +53,7 @@ fn a_stored_searcher_runs_on_another_thread() {
 
     let handle = std::thread::spawn(move || {
         let mut job = job;
-        SearcherIter::new(50, &mut job.searcher, &mut job.group).last().unwrap()
+        Run::new(50, &mut job.searcher, &mut job.group).last().unwrap()
     });
     let best = handle.join().unwrap();
 
@@ -88,8 +88,8 @@ fn clones_are_independent_even_when_interleaved() {
 
     let fitness = |w: &W| problem.fitness(w.x.0, w.t.0);
     {
-        let mut it_a = SearcherIter::new(4, &mut a, &mut group_a);
-        let mut it_b = SearcherIter::new(4, &mut b, &mut group_b);
+        let mut it_a = Run::new(4, &mut a, &mut group_a);
+        let mut it_b = Run::new(4, &mut b, &mut group_b);
         let mut best_b = Vec::new();
         for _ in 0..4 {
             it_a.next().unwrap();
@@ -98,10 +98,10 @@ fn clones_are_independent_even_when_interleaved() {
         drop(it_a);
         drop(it_b);
 
-        let b_best_known = group_b.iter().map(|p| p.best_fit).fold(f64::NEG_INFINITY, f64::max);
+        let b_best_known = group_b.iter().map(|p| p.best_score).fold(f64::NEG_INFINITY, f64::max);
         let last = best_b.last().unwrap();
-        assert_eq!(last.best_fit, b_best_known, "B's global best must come from B's particles");
-        assert!((fitness(&last.best_pos) - last.best_fit).abs() < 1e-9);
+        assert_eq!(last.best_score, b_best_known, "B's global best must come from B's particles");
+        assert!((fitness(&last.best_pos) - last.best_score).abs() < 1e-9);
     }
 }
 
@@ -114,8 +114,8 @@ fn a_clone_reproduces_the_original() {
     let mut group_a = initial_group(&problem, 8, &mut rng);
     let mut group_b = group_a.clone();
 
-    let best_a = SearcherIter::new(5, &mut a, &mut group_a).last().unwrap();
-    let best_b = SearcherIter::new(5, &mut b, &mut group_b).last().unwrap();
+    let best_a = Run::new(5, &mut a, &mut group_a).last().unwrap();
+    let best_b = Run::new(5, &mut b, &mut group_b).last().unwrap();
     assert_eq!(best_a, best_b);
     assert_eq!(group_a, group_b);
 }

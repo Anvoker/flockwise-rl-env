@@ -19,14 +19,14 @@ bash "$here/local_verify.sh" "$task" "$task/solution/src" "$work/verify" >/dev/n
 
 cd "$work/verify/app"
 bins=$(cargo test --release --offline --no-run --message-format=json 2>/dev/null \
-    | grep -o '"executable":"[^"]*"' | cut -d'"' -f4 | grep -v '/nestswarm-' || true)
+    | grep -o '"executable":"[^"]*"' | cut -d'"' -f4 | grep -v '/flockwise-' || true)
 
 out="$work/calibration"
 rm -rf "$out" && mkdir -p "$out"
 for bin in $bins; do
     name=$(basename "$bin" | sed 's/-[0-9a-f]*\(\.exe\)\{0,1\}$//')
     seq 1 "$runs" | xargs -P "$jobs" -I{} sh -c \
-        "NESTSWARM_SEED_BASE=\$(( {} * 10 )) '$bin' --test-threads=1 2>&1 | grep -E '^test .* FAILED$' || true" \
+        "FLOCKWISE_SEED_BASE=\$(( {} * 10 )) '$bin' --test-threads=1 2>&1 | grep -E '^test .* FAILED$' || true" \
         >"$out/$name.txt"
     total=$(grep -c 'FAILED' "$out/$name.txt" || true)
     echo "$name: $total failures in $runs runs"

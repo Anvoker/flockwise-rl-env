@@ -8,8 +8,10 @@ LOGS=/logs/verifier
 mkdir -p "$LOGS"
 cd "$APP"
 
-# The public traits are part of the contract: restore them.
+# The public traits and the route model are part of the contract: restore them.
+mkdir -p src/routes
 cp /tests/pristine/api.rs src/api.rs
+cp /tests/pristine/routes/model.rs src/routes/model.rs
 
 # Hidden tests and compile checks go next to the visible ones.
 cp -r /tests/hidden/. tests/

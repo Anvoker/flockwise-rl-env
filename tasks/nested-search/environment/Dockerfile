@@ -9,6 +9,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Offline documentation for the standard library.
+RUN rustup component add rust-docs
+
 RUN rustup toolchain install "${MIRI_NIGHTLY}" --profile minimal --component miri,rust-src \
     && cargo +"${MIRI_NIGHTLY}" miri setup
 
@@ -20,14 +23,16 @@ ENV MIRI_SYSROOT=/root/.cache/miri
 WORKDIR /app
 COPY repo/ /app/
 
-# Fetch and build the dependencies once. The tests don't compile against the
-# starting state, so the builds are expected to fail after the dependencies.
+# Fetch and build the dependencies once, and document them for offline use.
+# The library doesn't compile in its starting state, so the builds are
+# expected to fail after the dependencies.
 RUN chmod +x ci.sh compile_checks/run.sh \
     && cargo fetch \
+    && cargo doc -p rand -p rand_core -p rand_chacha \
     && (cargo test --release --no-run || true) \
     && (cargo +"${MIRI_NIGHTLY}" miri test --no-run --test miri || true)
 
 ENV CARGO_NET_OFFLINE=true
 
 RUN git init -q && git add -A \
-    && git -c user.name=nestswarm -c user.email=nestswarm@example.invalid commit -q -m "Starting state"
+    && git -c user.name=flockwise -c user.email=flockwise@example.invalid commit -q -m "Starting state"

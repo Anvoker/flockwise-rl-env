@@ -1,11 +1,8 @@
 [package]
-name = "nestswarm"
+name = "flockwise"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 
 [dependencies]
-rand = "0.9.2"
-
-[dev-dependencies]
 rand = { version = "0.9.2", features = ["std_rng"] }

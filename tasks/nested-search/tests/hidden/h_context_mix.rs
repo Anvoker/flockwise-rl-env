@@ -8,9 +8,9 @@ mod hidden_common;
 use common::two_part::*;
 use common::*;
 use hidden_common::*;
-use nestswarm::{
-    Boundary, BoundedMover, Contextful, FitCalc, GBest, GBestSearcherOne, GBestSearcherTwo,
-    GBestSinglePMover, Mover, NestedMover, OnPart, ParticleMut, SearcherIter,
+use flockwise::{
+    Region, Confined, OuterAware, Objective, BestSoFar, Swarm1, Swarm2,
+    PsoRule, Rule, InnerSearch, ForField, ParticleView, Run,
 };
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -18,13 +18,13 @@ use rand::rngs::StdRng;
 /// A fitness for `t` that doesn't look at the outer particle.
 #[derive(Clone, Debug)]
 struct PlainFit;
-impl Contextful for PlainFit {
-    type TContext = W;
-    fn set_context(&mut self, _: W) {}
+impl OuterAware for PlainFit {
+    type Outer = W;
+    fn see_outer(&mut self, _: W) {}
 }
-impl FitCalc for PlainFit {
-    type T = T;
-    fn calculate_fit(&self, t: T) -> f64 {
+impl Objective for PlainFit {
+    type Pos = T;
+    fn score(&self, t: T) -> f64 {
         -sq_dist(t.0, [0.0; K])
     }
 }
@@ -32,13 +32,13 @@ impl FitCalc for PlainFit {
 /// A boundary for `t` that doesn't look at the outer particle.
 #[derive(Clone, Debug)]
 struct PlainBounds;
-impl Contextful for PlainBounds {
-    type TContext = W;
-    fn set_context(&mut self, _: W) {}
+impl OuterAware for PlainBounds {
+    type Outer = W;
+    fn see_outer(&mut self, _: W) {}
 }
-impl Boundary for PlainBounds {
-    type T = T;
-    fn handle(&self, t: T) -> T {
+impl Region for PlainBounds {
+    type Pos = T;
+    fn confine(&self, t: T) -> T {
         T(clamp(t.0, [-20.0; K], [20.0; K]))
     }
 }
@@ -46,16 +46,16 @@ impl Boundary for PlainBounds {
 /// A mover that uses the outer particle: it nudges `t` towards the outer `x`.
 #[derive(Clone, Debug)]
 struct PullToX(W);
-impl Contextful for PullToX {
-    type TContext = W;
-    fn set_context(&mut self, w: W) {
+impl OuterAware for PullToX {
+    type Outer = W;
+    fn see_outer(&mut self, w: W) {
         self.0 = w;
     }
 }
-impl Mover for PullToX {
-    type TUnit = T;
-    type TCommon = GBest<T>;
-    fn update(&mut self, _: &GBest<T>, p: ParticleMut<'_, T>) {
+impl Rule for PullToX {
+    type Pos = T;
+    type Shared = BestSoFar<T>;
+    fn apply(&mut self, _: &BestSoFar<T>, p: ParticleView<'_, T>) {
         *p.pos = *p.pos + (T(self.0.x.0) - *p.pos) * 0.01;
     }
 }
@@ -63,16 +63,16 @@ impl Mover for PullToX {
 macro_rules! run {
     ($fit:expr, $bound:expr, $mover:expr, $log:expr) => {{
         let problem = Problem::standard();
-        let inner = GBestSearcherOne::new($fit, BoundedMover::new($mover, $bound));
-        let mut outer = GBestSearcherTwo::new(
+        let inner = Swarm1::new($fit, Confined::new($mover, $bound));
+        let mut outer = Swarm2::new(
             OuterFit(problem),
-            BoundedMover::new(GBestSinglePMover::new(CONFIG, StdRng::seed_from_u64(1)), XBounds(problem))
-                .on_part::<X>(),
-            NestedMover::new(3, inner, RecInit { inner: TInit { problem, count: 2 }, log: $log.clone() }, StdRng::seed_from_u64(2)),
+            Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(1)), XBounds(problem))
+                .for_field::<X>(),
+            InnerSearch::new(3, inner, RecInit { inner: TInit { problem, count: 2 }, log: $log.clone() }, StdRng::seed_from_u64(2)),
         );
         let mut rng = StdRng::seed_from_u64(3);
         let mut group = initial_group(&problem, 3, &mut rng);
-        SearcherIter::new(2, &mut outer, &mut group).for_each(drop);
+        Run::new(2, &mut outer, &mut group).for_each(drop);
     }};
 }
 
@@ -81,7 +81,7 @@ const PER_SEARCH: usize = 2 * 3;
 #[test]
 fn every_combination_of_context_use() {
     let p = Problem::standard();
-    let pso = || GBestSinglePMover::new(CONFIG, StdRng::seed_from_u64(9));
+    let pso = || PsoRule::new(CONFIG, StdRng::seed_from_u64(9));
 
     // fit, boundary, mover: C = uses context, N = ignores it.
     let l = Log::<W>::new();

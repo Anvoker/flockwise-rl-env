@@ -3,20 +3,20 @@
 mod common;
 
 use common::*;
-use nestswarm::{GBest, GBestSinglePMover, Mover, Particle, SearchConfigGBest};
+use flockwise::{BestSoFar, PsoRule, Rule, Particle, PsoParams};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 
 vector_unit!(V, 6);
 
-const CFG: SearchConfigGBest = SearchConfigGBest {
+const CFG: PsoParams = PsoParams {
     inertia: 0.5,
-    cognitive_coeff: 1.5,
-    social_coeff: 2.0,
+    cognitive: 1.5,
+    social: 2.0,
 };
 
-fn pso(seed: u64) -> impl Mover<TUnit = V, TCommon = GBest<V>, TContext = ()> {
-    GBestSinglePMover::new(CFG, StdRng::seed_from_u64(seed))
+fn pso(seed: u64) -> impl Rule<Pos = V, Shared = BestSoFar<V>, Outer = ()> {
+    PsoRule::new(CFG, StdRng::seed_from_u64(seed))
 }
 
 /// An RNG whose every uniform draw in [0, 1) is exactly 0.5, however it's drawn.
@@ -43,9 +43,9 @@ fn one_update_follows_the_formula() {
 
     let mut p = Particle::new(x, v);
     p.best_pos = pbest;
-    let mut mover = GBestSinglePMover::new(CFG, Half);
-    fn run(m: &mut impl Mover<TUnit = V, TCommon = GBest<V>, TContext = ()>, g: V, p: &mut Particle<V>) {
-        m.update(&GBest { best_pos: g, best_fit: 0.0 }, p.as_mut());
+    let mut mover = PsoRule::new(CFG, Half);
+    fn run(m: &mut impl Rule<Pos = V, Shared = BestSoFar<V>, Outer = ()>, g: V, p: &mut Particle<V>) {
+        m.apply(&BestSoFar { best_pos: g, best_score: 0.0 }, p.view());
     }
     run(&mut mover, gbest, &mut p);
 
@@ -63,9 +63,9 @@ fn at_both_bests_only_inertia_remains() {
     let x = V([1.0, -2.0, 0.5, 3.0, -1.5, 0.0]);
     let v = V([0.4, 0.1, -0.3, 0.0, 2.0, -1.0]);
     let mut p = Particle::new(x, v);
-    let common = GBest { best_pos: x, best_fit: 0.0 };
+    let common = BestSoFar { best_pos: x, best_score: 0.0 };
 
-    pso(1).update(&common, p.as_mut());
+    pso(1).apply(&common, p.view());
 
     assert_eq!(p.vel, v * 0.5);
     assert_eq!(p.pos, x + v * 0.5);
@@ -76,9 +76,9 @@ fn random_factors_are_drawn_per_coordinate() {
     for seed in 0..10 {
         let mut p = Particle::new(V([0.0; 6]), V([0.0; 6]));
         p.best_pos = V([1.0; 6]);
-        let common = GBest { best_pos: V([1.0; 6]), best_fit: 0.0 };
+        let common = BestSoFar { best_pos: V([1.0; 6]), best_score: 0.0 };
 
-        pso(seed).update(&common, p.as_mut());
+        pso(seed).apply(&common, p.view());
 
         // v_i = 1.5 * r1_i + 2.0 * r2_i, with r in [0, 1).
         for v in p.vel.0 {

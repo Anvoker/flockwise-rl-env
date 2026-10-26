@@ -18,7 +18,7 @@ version = "0.0.0"
 edition = "2024"
 
 [dependencies]
-nestswarm = { path = "$crate" }
+flockwise = { path = "$crate" }
 rand = { version = "0.9.2", features = ["std_rng"] }
 TOML
     {

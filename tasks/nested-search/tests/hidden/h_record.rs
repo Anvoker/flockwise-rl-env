@@ -7,9 +7,9 @@ mod hidden_common;
 use common::two_part::*;
 use common::*;
 use hidden_common::*;
-use nestswarm::{
-    BoundedMover, GBestSearcherOne, GBestSearcherTwo, GBestSinglePMover, NestedMover, OnPart,
-    SearcherIter,
+use flockwise::{
+    Confined, Swarm1, Swarm2, PsoRule, InnerSearch, ForField,
+    Run,
 };
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -24,20 +24,20 @@ fn every_inner_component_sees_its_outer_particle() {
     let problem = Problem::standard();
     let log = Log::<W>::new();
 
-    let inner = GBestSearcherOne::new(
+    let inner = Swarm1::new(
         RecFit::new(InnerFit::new(problem), log.clone()),
-        BoundedMover::new(
-            RecMover::new(GBestSinglePMover::new(CONFIG, StdRng::seed_from_u64(1)), log.clone()),
+        Confined::new(
+            RecMover::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(1)), log.clone()),
             RecBound::new(TBounds::new(problem), log.clone()),
         ),
     );
 
     let outer_fit_log = Log::<()>::new();
-    let mut outer = GBestSearcherTwo::new(
+    let mut outer = Swarm2::new(
         RecFit::new(OuterFit(problem), outer_fit_log.clone()),
-        BoundedMover::new(GBestSinglePMover::new(CONFIG, StdRng::seed_from_u64(2)), XBounds(problem))
-            .on_part::<X>(),
-        NestedMover::new(
+        Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(2)), XBounds(problem))
+            .for_field::<X>(),
+        InnerSearch::new(
             INNER_ITERATIONS,
             inner,
             RecInit {
@@ -50,7 +50,7 @@ fn every_inner_component_sees_its_outer_particle() {
 
     let mut rng = StdRng::seed_from_u64(4);
     let mut group = initial_group(&problem, OUTER_PARTICLES, &mut rng);
-    let n = SearcherIter::new(OUTER_ITERATIONS, &mut outer, &mut group).count();
+    let n = Run::new(OUTER_ITERATIONS, &mut outer, &mut group).count();
     assert_eq!(n, OUTER_ITERATIONS, "a search yields once per iteration");
 
     let events = log.events();
@@ -70,22 +70,22 @@ fn context_reaches_components_wrapped_at_depth() {
     let wrapper_log = Log::<W>::new();
     let init_log = Log::<W>::new();
 
-    let inner = GBestSearcherOne::new(
+    let inner = Swarm1::new(
         InnerFit::new(problem),
         RecMover::new(
-            BoundedMover::new(
-                RecMover::new(GBestSinglePMover::new(CONFIG, StdRng::seed_from_u64(5)), log.clone()),
+            Confined::new(
+                RecMover::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(5)), log.clone()),
                 RecBound::new(TBounds::new(problem), log.clone()),
             ),
             wrapper_log.clone(),
         ),
     );
 
-    let mut outer = GBestSearcherTwo::new(
+    let mut outer = Swarm2::new(
         OuterFit(problem),
-        BoundedMover::new(GBestSinglePMover::new(CONFIG, StdRng::seed_from_u64(6)), XBounds(problem))
-            .on_part::<X>(),
-        NestedMover::new(
+        Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(6)), XBounds(problem))
+            .for_field::<X>(),
+        InnerSearch::new(
             INNER_ITERATIONS,
             inner,
             RecInit { inner: TInit { problem, count: INNER_PARTICLES }, log: init_log.clone() },
@@ -95,7 +95,7 @@ fn context_reaches_components_wrapped_at_depth() {
 
     let mut rng = StdRng::seed_from_u64(8);
     let mut group = initial_group(&problem, OUTER_PARTICLES, &mut rng);
-    SearcherIter::new(2, &mut outer, &mut group).for_each(drop);
+    Run::new(2, &mut outer, &mut group).for_each(drop);
 
     let per_search = INNER_PARTICLES * INNER_ITERATIONS;
     let inits = init_log.events();

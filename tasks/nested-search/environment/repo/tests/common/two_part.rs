@@ -5,7 +5,7 @@
 #![allow(dead_code)]
 
 use super::*;
-use nestswarm::{Boundary, Contextful, FitCalc, NestedInit, Particle};
+use flockwise::{Region, OuterAware, Objective, Seeder, Particle};
 use rand::Rng;
 use rand::rngs::StdRng;
 
@@ -45,14 +45,14 @@ impl Problem {
 #[derive(Clone, Debug)]
 pub struct OuterFit(pub Problem);
 
-impl Contextful for OuterFit {
-    type TContext = ();
-    fn set_context(&mut self, _: ()) {}
+impl OuterAware for OuterFit {
+    type Outer = ();
+    fn see_outer(&mut self, _: ()) {}
 }
 
-impl FitCalc for OuterFit {
-    type T = W;
-    fn calculate_fit(&self, p: W) -> f64 {
+impl Objective for OuterFit {
+    type Pos = W;
+    fn score(&self, p: W) -> f64 {
         self.0.fitness(p.x.0, p.t.0)
     }
 }
@@ -60,14 +60,14 @@ impl FitCalc for OuterFit {
 #[derive(Clone, Debug)]
 pub struct XBounds(pub Problem);
 
-impl Contextful for XBounds {
-    type TContext = ();
-    fn set_context(&mut self, _: ()) {}
+impl OuterAware for XBounds {
+    type Outer = ();
+    fn see_outer(&mut self, _: ()) {}
 }
 
-impl Boundary for XBounds {
-    type T = X;
-    fn handle(&self, x: X) -> X {
+impl Region for XBounds {
+    type Pos = X;
+    fn confine(&self, x: X) -> X {
         X(clamp(x.0, self.0.x_lo, self.0.x_hi))
     }
 }
@@ -79,16 +79,16 @@ pub struct InnerFit {
     pub outer: W,
 }
 
-impl Contextful for InnerFit {
-    type TContext = W;
-    fn set_context(&mut self, outer: W) {
+impl OuterAware for InnerFit {
+    type Outer = W;
+    fn see_outer(&mut self, outer: W) {
         self.outer = outer;
     }
 }
 
-impl FitCalc for InnerFit {
-    type T = T;
-    fn calculate_fit(&self, t: T) -> f64 {
+impl Objective for InnerFit {
+    type Pos = T;
+    fn score(&self, t: T) -> f64 {
         self.problem.fitness(self.outer.x.0, t.0)
     }
 }
@@ -100,16 +100,16 @@ pub struct TBounds {
     pub outer: W,
 }
 
-impl Contextful for TBounds {
-    type TContext = W;
-    fn set_context(&mut self, outer: W) {
+impl OuterAware for TBounds {
+    type Outer = W;
+    fn see_outer(&mut self, outer: W) {
         self.outer = outer;
     }
 }
 
-impl Boundary for TBounds {
-    type T = T;
-    fn handle(&self, t: T) -> T {
+impl Region for TBounds {
+    type Pos = T;
+    fn confine(&self, t: T) -> T {
         let x = self.outer.x.0;
         T(clamp(t.0, add(x, -self.problem.w), add(x, self.problem.w)))
     }
@@ -121,11 +121,11 @@ pub struct TInit {
     pub count: usize,
 }
 
-impl NestedInit for TInit {
-    type TOuter = W;
-    type TInner = T;
+impl Seeder for TInit {
+    type Outer = W;
+    type Inner = T;
 
-    fn init<R: Rng + ?Sized>(&self, outer: W, rng: &mut R) -> Vec<Particle<T>> {
+    fn seed<R: Rng + ?Sized>(&self, outer: W, rng: &mut R) -> Vec<Particle<T>> {
         let x = outer.x.0;
         let w = self.problem.w;
         (0..self.count)

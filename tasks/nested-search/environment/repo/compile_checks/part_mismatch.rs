@@ -1,9 +1,9 @@
 // A mover for `x` (its boundary is over X) placed on the `t` part.
 fn main() {
-    let _ = GBestSearcherOne::new(
+    let _ = Swarm1::new(
         FitOn::<W, ()>::new(),
-        BoundedMover::new(GBestSinglePMover::new(cfg(), rng()), BoundOn::<X, ()>::new())
-            //CASE .on_part::<X>(),
-            //FAIL .on_part::<T>(),
+        Confined::new(PsoRule::new(cfg(), rng()), BoundOn::<X, ()>::new())
+            //CASE .for_field::<X>(),
+            //FAIL .for_field::<T>(),
     );
 }

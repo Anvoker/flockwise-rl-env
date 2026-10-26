@@ -5,9 +5,9 @@ mod common;
 
 use common::two_part::*;
 use common::*;
-use nestswarm::{
-    BoundedMover, Contextful, GBestSearcherOne, GBestSearcherTwo, GBestSinglePMover, NestedMover,
-    OnPart, Searcher, SearcherIter,
+use flockwise::{
+    Confined, OuterAware, Swarm1, Swarm2, PsoRule, InnerSearch,
+    ForField, Search, Run,
 };
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -16,25 +16,25 @@ use rand::rngs::StdRng;
 fn inner_searcher(
     problem: Problem,
     seed: u64,
-) -> impl Searcher<TUnit = T> + Contextful<TContext = W> + Clone + Send {
-    GBestSearcherOne::new(
+) -> impl Search<Pos = T> + OuterAware<Outer = W> + Clone + Send {
+    Swarm1::new(
         InnerFit::new(problem),
-        BoundedMover::new(
-            GBestSinglePMover::new(CONFIG, StdRng::seed_from_u64(seed)),
+        Confined::new(
+            PsoRule::new(CONFIG, StdRng::seed_from_u64(seed)),
             TBounds::new(problem),
         ),
     )
 }
 
 fn solve(problem: Problem, seed: u64) -> W {
-    let mut outer = GBestSearcherTwo::new(
+    let mut outer = Swarm2::new(
         OuterFit(problem),
-        BoundedMover::new(
-            GBestSinglePMover::new(CONFIG, StdRng::seed_from_u64(seed + 1)),
+        Confined::new(
+            PsoRule::new(CONFIG, StdRng::seed_from_u64(seed + 1)),
             XBounds(problem),
         )
-        .on_part::<X>(),
-        NestedMover::new(
+        .for_field::<X>(),
+        InnerSearch::new(
             30,
             inner_searcher(problem, seed + 2),
             TInit { problem, count: 10 },
@@ -44,7 +44,7 @@ fn solve(problem: Problem, seed: u64) -> W {
 
     let mut rng = StdRng::seed_from_u64(seed);
     let mut group = initial_group(&problem, 20, &mut rng);
-    let best = SearcherIter::new(60, &mut outer, &mut group).last().unwrap();
+    let best = Run::new(60, &mut outer, &mut group).last().unwrap();
     best.best_pos
 }
 

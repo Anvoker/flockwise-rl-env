@@ -7,7 +7,7 @@ use std::fmt::Debug;
 use std::ops::{Add, Mul, Sub};
 
 /// A position in a search space.
-pub trait Unit:
+pub trait Point:
     Copy
     + Default
     + Debug
@@ -22,125 +22,140 @@ pub trait Unit:
     fn map_scalars(self, f: impl FnMut(f64) -> f64) -> Self;
 }
 
-/// A component that can be told the position of the particle in the enclosing search.
+/// A component that can be shown the position of the particle in the
+/// enclosing search.
 ///
-/// Every fitness function, boundary and mover is `Contextful`. Components that
-/// don't need context declare some `TContext` and ignore it in `set_context`.
-pub trait Contextful {
-    type TContext: Copy;
+/// Every objective, region and rule is `OuterAware`. Components that don't
+/// need the outer position declare some `Outer` type and ignore it.
+pub trait OuterAware {
+    type Outer: Copy;
 
-    fn set_context(&mut self, context: Self::TContext);
+    fn see_outer(&mut self, outer: Self::Outer);
 }
 
-/// A fitness function. Higher is better.
-pub trait FitCalc: Contextful {
-    type T: Unit;
+/// What a search maximizes.
+pub trait Objective: OuterAware {
+    type Pos: Point;
 
-    fn calculate_fit(&self, position: Self::T) -> f64;
+    fn score(&self, pos: Self::Pos) -> f64;
 }
 
 /// Maps a position back into the feasible region.
-pub trait Boundary: Contextful {
-    type T: Unit;
+pub trait Region: OuterAware {
+    type Pos: Point;
 
-    fn handle(&self, position: Self::T) -> Self::T;
+    fn confine(&self, pos: Self::Pos) -> Self::Pos;
 }
 
-/// Declares that `Self` is stored as a part of the whole unit `W`.
-pub trait PartOf<W: Unit>: Unit {
-    fn get(whole: &W) -> Self;
-    fn get_mut(whole: &mut W) -> &mut Self;
+/// Splits a view of a whole particle into a view of one of its fields.
+pub trait SplitFrom: Point {
+    type Whole: Point;
+
+    fn split(whole: ParticleView<'_, Self::Whole>) -> ParticleView<'_, Self>;
+}
+
+/// Reads one field out of a whole position.
+pub trait ReadFrom: Point {
+    type Whole: Point;
+
+    fn read(whole: &Self::Whole) -> Self;
+}
+
+/// Writes one field into a whole position.
+pub trait WriteInto: Point {
+    type Whole: Point;
+
+    fn write(self, whole: &mut Self::Whole);
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct Particle<T> {
-    pub pos: T,
-    pub vel: T,
-    pub fit: f64,
-    pub best_pos: T,
-    pub best_fit: f64,
+pub struct Particle<P> {
+    pub pos: P,
+    pub vel: P,
+    pub score: f64,
+    pub best_pos: P,
+    pub best_score: f64,
 }
 
-impl<T: Copy> Particle<T> {
-    /// A particle that hasn't been evaluated yet.
-    pub fn new(pos: T, vel: T) -> Self {
+impl<P: Copy> Particle<P> {
+    /// A particle that hasn't been scored yet.
+    pub fn new(pos: P, vel: P) -> Self {
         Particle {
             pos,
             vel,
-            fit: f64::NEG_INFINITY,
+            score: f64::NEG_INFINITY,
             best_pos: pos,
-            best_fit: f64::NEG_INFINITY,
+            best_score: f64::NEG_INFINITY,
         }
     }
 
-    pub fn as_mut(&mut self) -> ParticleMut<'_, T> {
-        ParticleMut {
+    pub fn view(&mut self) -> ParticleView<'_, P> {
+        ParticleView {
             pos: &mut self.pos,
             vel: &mut self.vel,
-            fit: &mut self.fit,
+            score: &mut self.score,
             best_pos: &mut self.best_pos,
-            best_fit: &mut self.best_fit,
+            best_score: &mut self.best_score,
         }
     }
 }
 
-/// A mutable view of a particle, or of one part of a particle.
-pub struct ParticleMut<'a, T> {
-    pub pos: &'a mut T,
-    pub vel: &'a mut T,
-    pub fit: &'a mut f64,
-    pub best_pos: &'a mut T,
-    pub best_fit: &'a mut f64,
+/// A mutable view of a particle, or of one field of a particle.
+pub struct ParticleView<'a, P> {
+    pub pos: &'a mut P,
+    pub vel: &'a mut P,
+    pub score: &'a mut f64,
+    pub best_pos: &'a mut P,
+    pub best_score: &'a mut f64,
 }
 
-impl<T> ParticleMut<'_, T> {
-    pub fn reborrow(&mut self) -> ParticleMut<'_, T> {
-        ParticleMut {
+impl<P> ParticleView<'_, P> {
+    pub fn reborrow(&mut self) -> ParticleView<'_, P> {
+        ParticleView {
             pos: self.pos,
             vel: self.vel,
-            fit: self.fit,
+            score: self.score,
             best_pos: self.best_pos,
-            best_fit: self.best_fit,
+            best_score: self.best_score,
         }
     }
 }
 
-/// The best position found by a whole swarm.
+/// The best position a whole swarm has found.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct GBest<T> {
-    pub best_pos: T,
-    pub best_fit: f64,
+pub struct BestSoFar<P> {
+    pub best_pos: P,
+    pub best_score: f64,
 }
 
-impl<T: Default> GBest<T> {
+impl<P: Default> BestSoFar<P> {
     pub fn new() -> Self {
-        GBest {
-            best_pos: T::default(),
-            best_fit: f64::NEG_INFINITY,
+        BestSoFar {
+            best_pos: P::default(),
+            best_score: f64::NEG_INFINITY,
         }
     }
 }
 
-impl<T: Default> Default for GBest<T> {
+impl<P: Default> Default for BestSoFar<P> {
     fn default() -> Self {
-        GBest::new()
+        BestSoFar::new()
     }
 }
 
-/// Moves one particle. `TCommon` is what the search shares with every
-/// particle, e.g. the global best.
-pub trait Mover: Contextful {
-    type TUnit: Unit;
-    type TCommon;
+/// Moves one particle. `Shared` is what the search shares with every
+/// particle, e.g. the best position so far.
+pub trait Rule: OuterAware {
+    type Pos: Point;
+    type Shared;
 
-    fn update(&mut self, common: &Self::TCommon, p: ParticleMut<'_, Self::TUnit>);
+    fn apply(&mut self, shared: &Self::Shared, p: ParticleView<'_, Self::Pos>);
 }
 
-/// Creates the particles of an inner search from the outer particle it runs for.
-pub trait NestedInit {
-    type TOuter: Unit;
-    type TInner: Unit;
+/// Creates the particles of an inner search from the outer position it runs for.
+pub trait Seeder {
+    type Outer: Point;
+    type Inner: Point;
 
-    fn init<R: Rng + ?Sized>(&self, outer: Self::TOuter, rng: &mut R)
-    -> Vec<Particle<Self::TInner>>;
+    fn seed<R: Rng + ?Sized>(&self, outer: Self::Outer, rng: &mut R) -> Vec<Particle<Self::Inner>>;
 }

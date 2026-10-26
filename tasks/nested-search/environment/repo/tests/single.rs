@@ -3,9 +3,9 @@
 mod common;
 
 use common::*;
-use nestswarm::{
-    Boundary, BoundedMover, Contextful, FitCalc, GBestSearcherOne, GBestSinglePMover, Particle,
-    SearcherIter,
+use flockwise::{
+    Region, Confined, OuterAware, Objective, Swarm1, PsoRule, Particle,
+    Run,
 };
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -18,14 +18,14 @@ struct Sphere {
     center: [f64; 4],
 }
 
-impl Contextful for Sphere {
-    type TContext = ();
-    fn set_context(&mut self, _: ()) {}
+impl OuterAware for Sphere {
+    type Outer = ();
+    fn see_outer(&mut self, _: ()) {}
 }
 
-impl FitCalc for Sphere {
-    type T = V;
-    fn calculate_fit(&self, v: V) -> f64 {
+impl Objective for Sphere {
+    type Pos = V;
+    fn score(&self, v: V) -> f64 {
         -sq_dist(v.0, self.center)
     }
 }
@@ -33,14 +33,14 @@ impl FitCalc for Sphere {
 #[derive(Clone, Debug)]
 struct Box100;
 
-impl Contextful for Box100 {
-    type TContext = ();
-    fn set_context(&mut self, _: ()) {}
+impl OuterAware for Box100 {
+    type Outer = ();
+    fn see_outer(&mut self, _: ()) {}
 }
 
-impl Boundary for Box100 {
-    type T = V;
-    fn handle(&self, v: V) -> V {
+impl Region for Box100 {
+    type Pos = V;
+    fn confine(&self, v: V) -> V {
         V(clamp(v.0, [-100.0; 4], [100.0; 4]))
     }
 }
@@ -50,9 +50,9 @@ fn single_search_finds_the_center() {
     let center = [1.0, -4.0, 2.5, 7.0];
 
     for seed in seed_base()..seed_base() + 5 {
-        let mut searcher = GBestSearcherOne::new(
+        let mut searcher = Swarm1::new(
             Sphere { center },
-            BoundedMover::new(GBestSinglePMover::new(CONFIG, StdRng::seed_from_u64(seed)), Box100),
+            Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(seed)), Box100),
         );
 
         let mut rng = StdRng::seed_from_u64(seed + 100);
@@ -66,7 +66,7 @@ fn single_search_finds_the_center() {
             .collect();
 
         let initial: Vec<V> = group.iter().map(|p| p.pos).collect();
-        let mut iter = SearcherIter::new(100, &mut searcher, &mut group);
+        let mut iter = Run::new(100, &mut searcher, &mut group);
         let first = iter.next().unwrap();
         let mut bests = vec![first];
         bests.extend(iter);
@@ -74,7 +74,7 @@ fn single_search_finds_the_center() {
 
         // The global best never gets worse.
         for pair in bests.windows(2) {
-            assert!(pair[1].best_fit >= pair[0].best_fit, "seed {seed}: the global best got worse");
+            assert!(pair[1].best_score >= pair[0].best_score, "seed {seed}: the global best got worse");
         }
 
         // After the first iteration, the global best is the best starting position.
@@ -82,10 +82,10 @@ fn single_search_finds_the_center() {
         let best_start = initial
             .iter()
             .copied()
-            .max_by(|a, b| sphere.calculate_fit(*a).total_cmp(&sphere.calculate_fit(*b)))
+            .max_by(|a, b| sphere.score(*a).total_cmp(&sphere.score(*b)))
             .unwrap();
         assert_eq!(first.best_pos, best_start, "seed {seed}");
-        assert_eq!(first.best_fit, sphere.calculate_fit(best_start), "seed {seed}");
+        assert_eq!(first.best_score, sphere.score(best_start), "seed {seed}");
         let best = *bests.last().unwrap();
         let d = max_abs_diff(best.best_pos.0, center);
         assert!(d < 1e-3, "seed {seed}: {best:?}");
@@ -95,9 +95,9 @@ fn single_search_finds_the_center() {
 #[test]
 fn personal_bests_after_one_iteration_are_the_starting_positions() {
     let center = [1.0, -4.0, 2.5, 7.0];
-    let mut searcher = GBestSearcherOne::new(
+    let mut searcher = Swarm1::new(
         Sphere { center },
-        BoundedMover::new(GBestSinglePMover::new(CONFIG, StdRng::seed_from_u64(5)), Box100),
+        Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(5)), Box100),
     );
     let mut rng = StdRng::seed_from_u64(6);
     let mut group: Vec<Particle<V>> = (0..8)
@@ -105,12 +105,12 @@ fn personal_bests_after_one_iteration_are_the_starting_positions() {
         .collect();
     let initial: Vec<V> = group.iter().map(|p| p.pos).collect();
 
-    SearcherIter::new(1, &mut searcher, &mut group).for_each(drop);
+    Run::new(1, &mut searcher, &mut group).for_each(drop);
 
     let sphere = Sphere { center };
     for (p, start) in group.iter().zip(&initial) {
         assert_eq!(p.best_pos, *start);
-        assert_eq!(p.best_fit, sphere.calculate_fit(*start));
+        assert_eq!(p.best_score, sphere.score(*start));
         assert_ne!(p.pos, *start, "every particle moved");
     }
 }

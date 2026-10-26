@@ -12,9 +12,9 @@ mod hidden_common;
 
 use common::*;
 use hidden_common::*;
-use nestswarm::{
-    Boundary, BoundedMover, Contextful, FitCalc, GBestSearcherOne, GBestSearcherTwo,
-    GBestSinglePMover, NestedInit, NestedMover, OnPart, Particle, Searcher, SearcherIter,
+use flockwise::{
+    Region, Confined, OuterAware, Objective, Swarm1, Swarm2,
+    PsoRule, Seeder, InnerSearch, ForField, Particle, Search, Run,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -52,9 +52,9 @@ impl Chain {
 
 macro_rules! no_context {
     ($ty:ty) => {
-        impl Contextful for $ty {
-            type TContext = ();
-            fn set_context(&mut self, _: ()) {}
+        impl OuterAware for $ty {
+            type Outer = ();
+            fn see_outer(&mut self, _: ()) {}
         }
     };
 }
@@ -63,9 +63,9 @@ macro_rules! no_context {
 #[derive(Clone, Debug)]
 struct Fit1(Chain);
 no_context!(Fit1);
-impl FitCalc for Fit1 {
-    type T = W;
-    fn calculate_fit(&self, w: W) -> f64 {
+impl Objective for Fit1 {
+    type Pos = W;
+    fn score(&self, w: W) -> f64 {
         -sq_dist(w.x.0, self.0.a) + self.0.y_term(w.x.0, w.yt.y.0) + self.0.t_term(w.yt.y.0, w.yt.t.0)
     }
 }
@@ -73,9 +73,9 @@ impl FitCalc for Fit1 {
 #[derive(Clone, Debug)]
 struct XBox;
 no_context!(XBox);
-impl Boundary for XBox {
-    type T = X;
-    fn handle(&self, x: X) -> X {
+impl Region for XBox {
+    type Pos = X;
+    fn confine(&self, x: X) -> X {
         X(clamp(x.0, [-50.0; K], [50.0; K]))
     }
 }
@@ -83,30 +83,30 @@ impl Boundary for XBox {
 // Level 2: sees the level-1 particle.
 #[derive(Clone, Debug)]
 struct Fit2(Chain, W);
-impl Contextful for Fit2 {
-    type TContext = W;
-    fn set_context(&mut self, w: W) {
+impl OuterAware for Fit2 {
+    type Outer = W;
+    fn see_outer(&mut self, w: W) {
         self.1 = w;
     }
 }
-impl FitCalc for Fit2 {
-    type T = YT;
-    fn calculate_fit(&self, yt: YT) -> f64 {
+impl Objective for Fit2 {
+    type Pos = YT;
+    fn score(&self, yt: YT) -> f64 {
         self.0.y_term(self.1.x.0, yt.y.0) + self.0.t_term(yt.y.0, yt.t.0)
     }
 }
 
 #[derive(Clone, Debug)]
 struct YBounds(Chain, W);
-impl Contextful for YBounds {
-    type TContext = W;
-    fn set_context(&mut self, w: W) {
+impl OuterAware for YBounds {
+    type Outer = W;
+    fn see_outer(&mut self, w: W) {
         self.1 = w;
     }
 }
-impl Boundary for YBounds {
-    type T = Y;
-    fn handle(&self, y: Y) -> Y {
+impl Region for YBounds {
+    type Pos = Y;
+    fn confine(&self, y: Y) -> Y {
         let x = self.1.x.0;
         Y(clamp(y.0, add(x, -self.0.w1), add(x, self.0.w1)))
     }
@@ -114,10 +114,10 @@ impl Boundary for YBounds {
 
 #[derive(Clone, Debug)]
 struct Init2(Chain, usize);
-impl NestedInit for Init2 {
-    type TOuter = W;
-    type TInner = YT;
-    fn init<R: Rng + ?Sized>(&self, w: W, rng: &mut R) -> Vec<Particle<YT>> {
+impl Seeder for Init2 {
+    type Outer = W;
+    type Inner = YT;
+    fn seed<R: Rng + ?Sized>(&self, w: W, rng: &mut R) -> Vec<Particle<YT>> {
         let x = w.x.0;
         (0..self.1)
             .map(|_| {
@@ -134,30 +134,30 @@ impl NestedInit for Init2 {
 // Level 3: sees the level-2 particle only.
 #[derive(Clone, Debug)]
 struct Fit3(Chain, YT);
-impl Contextful for Fit3 {
-    type TContext = YT;
-    fn set_context(&mut self, yt: YT) {
+impl OuterAware for Fit3 {
+    type Outer = YT;
+    fn see_outer(&mut self, yt: YT) {
         self.1 = yt;
     }
 }
-impl FitCalc for Fit3 {
-    type T = T;
-    fn calculate_fit(&self, t: T) -> f64 {
+impl Objective for Fit3 {
+    type Pos = T;
+    fn score(&self, t: T) -> f64 {
         self.0.t_term(self.1.y.0, t.0)
     }
 }
 
 #[derive(Clone, Debug)]
 struct TBounds(Chain, YT);
-impl Contextful for TBounds {
-    type TContext = YT;
-    fn set_context(&mut self, yt: YT) {
+impl OuterAware for TBounds {
+    type Outer = YT;
+    fn see_outer(&mut self, yt: YT) {
         self.1 = yt;
     }
 }
-impl Boundary for TBounds {
-    type T = T;
-    fn handle(&self, t: T) -> T {
+impl Region for TBounds {
+    type Pos = T;
+    fn confine(&self, t: T) -> T {
         let y = self.1.y.0;
         T(clamp(t.0, add(y, -self.0.w2), add(y, self.0.w2)))
     }
@@ -165,10 +165,10 @@ impl Boundary for TBounds {
 
 #[derive(Clone, Debug)]
 struct Init3(Chain, usize);
-impl NestedInit for Init3 {
-    type TOuter = YT;
-    type TInner = T;
-    fn init<R: Rng + ?Sized>(&self, yt: YT, rng: &mut R) -> Vec<Particle<T>> {
+impl Seeder for Init3 {
+    type Outer = YT;
+    type Inner = T;
+    fn seed<R: Rng + ?Sized>(&self, yt: YT, rng: &mut R) -> Vec<Particle<T>> {
         let y = yt.y.0;
         (0..self.1)
             .map(|_| {
@@ -184,11 +184,11 @@ struct Logs {
     level3: Log<YT>,
 }
 
-fn level3(chain: Chain, seed: u64, log: &Log<YT>) -> impl Searcher<TUnit = T> + Contextful<TContext = YT> + Clone + Send {
-    GBestSearcherOne::new(
+fn level3(chain: Chain, seed: u64, log: &Log<YT>) -> impl Search<Pos = T> + OuterAware<Outer = YT> + Clone + Send {
+    Swarm1::new(
         RecFit::new(Fit3(chain, YT::default()), log.clone()),
-        BoundedMover::new(
-            GBestSinglePMover::new(CONFIG, StdRng::seed_from_u64(seed)),
+        Confined::new(
+            PsoRule::new(CONFIG, StdRng::seed_from_u64(seed)),
             RecBound::new(TBounds(chain, YT::default()), log.clone()),
         ),
     )
@@ -199,16 +199,16 @@ fn level2(
     seed: u64,
     logs: &Logs,
     sizes: (usize, usize, usize, usize),
-) -> impl Searcher<TUnit = YT> + Contextful<TContext = W> + Clone + Send {
+) -> impl Search<Pos = YT> + OuterAware<Outer = W> + Clone + Send {
     let (_, _, p3, n3) = sizes;
-    GBestSearcherTwo::new(
+    Swarm2::new(
         RecFit::new(Fit2(chain, W::default()), logs.level2.clone()),
-        BoundedMover::new(
-            GBestSinglePMover::new(CONFIG, StdRng::seed_from_u64(seed)),
+        Confined::new(
+            PsoRule::new(CONFIG, StdRng::seed_from_u64(seed)),
             RecBound::new(YBounds(chain, W::default()), logs.level2.clone()),
         )
-        .on_part::<Y>(),
-        NestedMover::new(
+        .for_field::<Y>(),
+        InnerSearch::new(
             n3,
             level3(chain, seed + 1, &logs.level3),
             RecInit { inner: Init3(chain, p3), log: logs.level3.clone() },
@@ -221,10 +221,10 @@ fn solve(chain: Chain, seed: u64, logs: &Logs, sizes: (usize, usize, usize, usiz
     let (p2, n2, _, _) = sizes;
     let (p1, n1) = outer;
 
-    let mut searcher = GBestSearcherTwo::new(
+    let mut searcher = Swarm2::new(
         Fit1(chain),
-        BoundedMover::new(GBestSinglePMover::new(CONFIG, StdRng::seed_from_u64(seed)), XBox).on_part::<X>(),
-        NestedMover::new(
+        Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(seed)), XBox).for_field::<X>(),
+        InnerSearch::new(
             n2,
             level2(chain, seed + 10, logs, sizes),
             RecInit { inner: Init2(chain, p2), log: logs.level2.clone() },
@@ -242,7 +242,7 @@ fn solve(chain: Chain, seed: u64, logs: &Logs, sizes: (usize, usize, usize, usiz
         })
         .collect();
 
-    SearcherIter::new(n1, &mut searcher, &mut group).last().unwrap().best_pos
+    Run::new(n1, &mut searcher, &mut group).last().unwrap().best_pos
 }
 
 fn chain() -> Chain {

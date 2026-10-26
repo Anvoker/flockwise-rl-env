@@ -5,9 +5,9 @@ mod common;
 
 use common::two_part::*;
 use common::*;
-use nestswarm::{
-    Boundary, BoundedMover, Contextful, FitCalc, GBestSearcherOne, GBestSearcherTwo,
-    GBestSinglePMover, NestedInit, NestedMover, OnPart, Particle, SearcherIter,
+use flockwise::{
+    Region, Confined, OuterAware, Objective, Swarm1, Swarm2,
+    PsoRule, Seeder, InnerSearch, ForField, Particle, Run,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -16,14 +16,14 @@ use rand::{Rng, SeedableRng};
 #[derive(Clone, Debug)]
 struct TBox;
 
-impl Contextful for TBox {
-    type TContext = ();
-    fn set_context(&mut self, _: ()) {}
+impl OuterAware for TBox {
+    type Outer = ();
+    fn see_outer(&mut self, _: ()) {}
 }
 
-impl Boundary for TBox {
-    type T = T;
-    fn handle(&self, t: T) -> T {
+impl Region for TBox {
+    type Pos = T;
+    fn confine(&self, t: T) -> T {
         T(clamp(t.0, [-30.0; K], [30.0; K]))
     }
 }
@@ -35,16 +35,16 @@ struct InnerFitX {
     outer: W,
 }
 
-impl Contextful for InnerFitX {
-    type TContext = W;
-    fn set_context(&mut self, outer: W) {
+impl OuterAware for InnerFitX {
+    type Outer = W;
+    fn see_outer(&mut self, outer: W) {
         self.outer = outer;
     }
 }
 
-impl FitCalc for InnerFitX {
-    type T = X;
-    fn calculate_fit(&self, x: X) -> f64 {
+impl Objective for InnerFitX {
+    type Pos = X;
+    fn score(&self, x: X) -> f64 {
         self.problem.fitness(x.0, self.outer.t.0)
     }
 }
@@ -56,16 +56,16 @@ struct XBoundsFromT {
     outer: W,
 }
 
-impl Contextful for XBoundsFromT {
-    type TContext = W;
-    fn set_context(&mut self, outer: W) {
+impl OuterAware for XBoundsFromT {
+    type Outer = W;
+    fn see_outer(&mut self, outer: W) {
         self.outer = outer;
     }
 }
 
-impl Boundary for XBoundsFromT {
-    type T = X;
-    fn handle(&self, x: X) -> X {
+impl Region for XBoundsFromT {
+    type Pos = X;
+    fn confine(&self, x: X) -> X {
         let t = self.outer.t.0;
         let w = self.problem.w;
         let lo = std::array::from_fn(|i| (t[i] - w).max(self.problem.x_lo[i]));
@@ -80,11 +80,11 @@ struct XInit {
     count: usize,
 }
 
-impl NestedInit for XInit {
-    type TOuter = W;
-    type TInner = X;
+impl Seeder for XInit {
+    type Outer = W;
+    type Inner = X;
 
-    fn init<R: Rng + ?Sized>(&self, outer: W, rng: &mut R) -> Vec<Particle<X>> {
+    fn seed<R: Rng + ?Sized>(&self, outer: W, rng: &mut R) -> Vec<Particle<X>> {
         let t = outer.t.0;
         let w = self.problem.w;
         (0..self.count)
@@ -98,13 +98,13 @@ impl NestedInit for XInit {
 }
 
 fn solve(problem: Problem, seed: u64) -> W {
-    let inner = GBestSearcherOne::new(
+    let inner = Swarm1::new(
         InnerFitX {
             problem,
             outer: W::default(),
         },
-        BoundedMover::new(
-            GBestSinglePMover::new(CONFIG, StdRng::seed_from_u64(seed + 1)),
+        Confined::new(
+            PsoRule::new(CONFIG, StdRng::seed_from_u64(seed + 1)),
             XBoundsFromT {
                 problem,
                 outer: W::default(),
@@ -112,11 +112,11 @@ fn solve(problem: Problem, seed: u64) -> W {
         ),
     );
 
-    let mut outer = GBestSearcherTwo::new(
+    let mut outer = Swarm2::new(
         OuterFit(problem),
-        BoundedMover::new(GBestSinglePMover::new(CONFIG, StdRng::seed_from_u64(seed + 2)), TBox)
-            .on_part::<T>(),
-        NestedMover::new(30, inner, XInit { problem, count: 10 }, StdRng::seed_from_u64(seed + 3)),
+        Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(seed + 2)), TBox)
+            .for_field::<T>(),
+        InnerSearch::new(30, inner, XInit { problem, count: 10 }, StdRng::seed_from_u64(seed + 3)),
     );
 
     let mut rng = StdRng::seed_from_u64(seed);
@@ -128,7 +128,7 @@ fn solve(problem: Problem, seed: u64) -> W {
         })
         .collect();
 
-    SearcherIter::new(60, &mut outer, &mut group).last().unwrap().best_pos
+    Run::new(60, &mut outer, &mut group).last().unwrap().best_pos
 }
 
 #[test]

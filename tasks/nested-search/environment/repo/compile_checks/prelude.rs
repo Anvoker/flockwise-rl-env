@@ -1,7 +1,7 @@
 // Shared by every compile check. Written against the public API only.
 #![allow(dead_code, unused_imports)]
 
-use nestswarm::*;
+use flockwise::*;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::marker::PhantomData;
@@ -23,7 +23,7 @@ macro_rules! unit {
             type Output = Self;
             fn mul(self, r: f64) -> Self { $name([self.0[0] * r, self.0[1] * r]) }
         }
-        impl Unit for $name {
+        impl Point for $name {
             fn map_scalars(self, mut f: impl FnMut(f64) -> f64) -> Self { $name(self.0.map(|v| f(v))) }
         }
     };
@@ -50,19 +50,31 @@ impl Mul<f64> for W {
     type Output = Self;
     fn mul(self, r: f64) -> Self { W { x: self.x * r, t: self.t * r } }
 }
-impl Unit for W {
+impl Point for W {
     fn map_scalars(self, mut f: impl FnMut(f64) -> f64) -> Self {
         W { x: self.x.map_scalars(&mut f), t: self.t.map_scalars(&mut f) }
     }
 }
-impl PartOf<W> for X {
-    fn get(w: &W) -> Self { w.x }
-    fn get_mut(w: &mut W) -> &mut Self { &mut w.x }
+macro_rules! field_of {
+    ($f:ident : $ty:ty) => {
+        impl SplitFrom for $ty {
+            type Whole = W;
+            fn split(w: ParticleView<'_, W>) -> ParticleView<'_, Self> {
+                ParticleView { pos: &mut w.pos.$f, vel: &mut w.vel.$f, score: w.score, best_pos: &mut w.best_pos.$f, best_score: w.best_score }
+            }
+        }
+        impl ReadFrom for $ty {
+            type Whole = W;
+            fn read(w: &W) -> Self { w.$f }
+        }
+        impl WriteInto for $ty {
+            type Whole = W;
+            fn write(self, w: &mut W) { w.$f = self; }
+        }
+    };
 }
-impl PartOf<W> for T {
-    fn get(w: &W) -> Self { w.t }
-    fn get_mut(w: &mut W) -> &mut Self { &mut w.t }
-}
+field_of!(x: X);
+field_of!(t: T);
 
 /// A fitness over unit `U` that takes context `C`.
 #[derive(Clone, Debug)]
@@ -70,13 +82,13 @@ struct FitOn<U, C>(PhantomData<fn() -> (U, C)>);
 impl<U, C> FitOn<U, C> {
     fn new() -> Self { FitOn(PhantomData) }
 }
-impl<U, C: Copy> Contextful for FitOn<U, C> {
-    type TContext = C;
-    fn set_context(&mut self, _: C) {}
+impl<U, C: Copy> OuterAware for FitOn<U, C> {
+    type Outer = C;
+    fn see_outer(&mut self, _: C) {}
 }
-impl<U: Unit, C: Copy> FitCalc for FitOn<U, C> {
-    type T = U;
-    fn calculate_fit(&self, _: U) -> f64 { 0.0 }
+impl<U: Point, C: Copy> Objective for FitOn<U, C> {
+    type Pos = U;
+    fn score(&self, _: U) -> f64 { 0.0 }
 }
 
 /// A boundary over unit `U` that takes context `C`.
@@ -85,13 +97,13 @@ struct BoundOn<U, C>(PhantomData<fn() -> (U, C)>);
 impl<U, C> BoundOn<U, C> {
     fn new() -> Self { BoundOn(PhantomData) }
 }
-impl<U, C: Copy> Contextful for BoundOn<U, C> {
-    type TContext = C;
-    fn set_context(&mut self, _: C) {}
+impl<U, C: Copy> OuterAware for BoundOn<U, C> {
+    type Outer = C;
+    fn see_outer(&mut self, _: C) {}
 }
-impl<U: Unit, C: Copy> Boundary for BoundOn<U, C> {
-    type T = U;
-    fn handle(&self, u: U) -> U { u }
+impl<U: Point, C: Copy> Region for BoundOn<U, C> {
+    type Pos = U;
+    fn confine(&self, u: U) -> U { u }
 }
 
 /// Initializes inner particles of unit `I` from an outer particle of unit `O`.
@@ -100,14 +112,14 @@ struct InitFor<O, I>(PhantomData<fn() -> (O, I)>);
 impl<O, I> InitFor<O, I> {
     fn new() -> Self { InitFor(PhantomData) }
 }
-impl<O: Unit, I: Unit> NestedInit for InitFor<O, I> {
-    type TOuter = O;
-    type TInner = I;
-    fn init<R: Rng + ?Sized>(&self, _: O, _: &mut R) -> Vec<Particle<I>> { Vec::new() }
+impl<O: Point, I: Point> Seeder for InitFor<O, I> {
+    type Outer = O;
+    type Inner = I;
+    fn seed<R: Rng + ?Sized>(&self, _: O, _: &mut R) -> Vec<Particle<I>> { Vec::new() }
 }
 
-fn cfg() -> SearchConfigGBest {
-    SearchConfigGBest { inertia: 0.7, cognitive_coeff: 1.5, social_coeff: 1.5 }
+fn cfg() -> PsoParams {
+    PsoParams { inertia: 0.7, cognitive: 1.5, social: 1.5 }
 }
 
 fn rng() -> StdRng {

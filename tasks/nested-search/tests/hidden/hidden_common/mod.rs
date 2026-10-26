@@ -1,7 +1,7 @@
 //! Helpers for the hidden tests: recording components and a user-written mover.
 #![allow(dead_code)]
 
-use nestswarm::{Boundary, Contextful, FitCalc, GBest, Mover, NestedInit, Particle, ParticleMut, Unit};
+use flockwise::{Region, OuterAware, Objective, BestSoFar, Rule, Seeder, Particle, ParticleView, Point};
 use rand::Rng;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -74,117 +74,117 @@ pub fn check_counts<C: Debug + Clone>(events: &[Event<C>], per_search: usize, ki
 
 /// Wraps a fitness function and records the context at every evaluation.
 #[derive(Clone, Debug)]
-pub struct RecFit<F: FitCalc> {
+pub struct RecFit<F: Objective> {
     pub inner: F,
-    pub context: F::TContext,
-    pub log: Log<F::TContext>,
+    pub context: F::Outer,
+    pub log: Log<F::Outer>,
 }
 
-impl<F: FitCalc> RecFit<F>
+impl<F: Objective> RecFit<F>
 where
-    F::TContext: Default,
+    F::Outer: Default,
 {
-    pub fn new(inner: F, log: Log<F::TContext>) -> Self {
+    pub fn new(inner: F, log: Log<F::Outer>) -> Self {
         RecFit { inner, context: Default::default(), log }
     }
 }
 
-impl<F: FitCalc> Contextful for RecFit<F> {
-    type TContext = F::TContext;
-    fn set_context(&mut self, context: Self::TContext) {
+impl<F: Objective> OuterAware for RecFit<F> {
+    type Outer = F::Outer;
+    fn see_outer(&mut self, context: Self::Outer) {
         self.context = context;
-        self.inner.set_context(context);
+        self.inner.see_outer(context);
     }
 }
 
-impl<F: FitCalc> FitCalc for RecFit<F> {
-    type T = F::T;
-    fn calculate_fit(&self, position: Self::T) -> f64 {
+impl<F: Objective> Objective for RecFit<F> {
+    type Pos = F::Pos;
+    fn score(&self, position: Self::Pos) -> f64 {
         self.log.push(Event::Fit(self.context));
-        self.inner.calculate_fit(position)
+        self.inner.score(position)
     }
 }
 
 /// Wraps a boundary and records the context at every call.
 #[derive(Clone, Debug)]
-pub struct RecBound<B: Boundary> {
+pub struct RecBound<B: Region> {
     pub inner: B,
-    pub context: B::TContext,
-    pub log: Log<B::TContext>,
+    pub context: B::Outer,
+    pub log: Log<B::Outer>,
 }
 
-impl<B: Boundary> RecBound<B>
+impl<B: Region> RecBound<B>
 where
-    B::TContext: Default,
+    B::Outer: Default,
 {
-    pub fn new(inner: B, log: Log<B::TContext>) -> Self {
+    pub fn new(inner: B, log: Log<B::Outer>) -> Self {
         RecBound { inner, context: Default::default(), log }
     }
 }
 
-impl<B: Boundary> Contextful for RecBound<B> {
-    type TContext = B::TContext;
-    fn set_context(&mut self, context: Self::TContext) {
+impl<B: Region> OuterAware for RecBound<B> {
+    type Outer = B::Outer;
+    fn see_outer(&mut self, context: Self::Outer) {
         self.context = context;
-        self.inner.set_context(context);
+        self.inner.see_outer(context);
     }
 }
 
-impl<B: Boundary> Boundary for RecBound<B> {
-    type T = B::T;
-    fn handle(&self, position: Self::T) -> Self::T {
+impl<B: Region> Region for RecBound<B> {
+    type Pos = B::Pos;
+    fn confine(&self, position: Self::Pos) -> Self::Pos {
         self.log.push(Event::Bound(self.context));
-        self.inner.handle(position)
+        self.inner.confine(position)
     }
 }
 
 /// Wraps a mover and records the context at every move.
 #[derive(Clone, Debug)]
-pub struct RecMover<M: Mover> {
+pub struct RecMover<M: Rule> {
     pub inner: M,
-    pub context: M::TContext,
-    pub log: Log<M::TContext>,
+    pub context: M::Outer,
+    pub log: Log<M::Outer>,
 }
 
-impl<M: Mover> RecMover<M>
+impl<M: Rule> RecMover<M>
 where
-    M::TContext: Default,
+    M::Outer: Default,
 {
-    pub fn new(inner: M, log: Log<M::TContext>) -> Self {
+    pub fn new(inner: M, log: Log<M::Outer>) -> Self {
         RecMover { inner, context: Default::default(), log }
     }
 }
 
-impl<M: Mover> Contextful for RecMover<M> {
-    type TContext = M::TContext;
-    fn set_context(&mut self, context: Self::TContext) {
+impl<M: Rule> OuterAware for RecMover<M> {
+    type Outer = M::Outer;
+    fn see_outer(&mut self, context: Self::Outer) {
         self.context = context;
-        self.inner.set_context(context);
+        self.inner.see_outer(context);
     }
 }
 
-impl<M: Mover> Mover for RecMover<M> {
-    type TUnit = M::TUnit;
-    type TCommon = M::TCommon;
-    fn update(&mut self, common: &Self::TCommon, p: ParticleMut<'_, Self::TUnit>) {
+impl<M: Rule> Rule for RecMover<M> {
+    type Pos = M::Pos;
+    type Shared = M::Shared;
+    fn apply(&mut self, common: &Self::Shared, p: ParticleView<'_, Self::Pos>) {
         self.log.push(Event::Move(self.context));
-        self.inner.update(common, p);
+        self.inner.apply(common, p);
     }
 }
 
 /// Wraps an initializer and records the outer particle of every inner search.
 #[derive(Clone, Debug)]
-pub struct RecInit<I: NestedInit> {
+pub struct RecInit<I: Seeder> {
     pub inner: I,
-    pub log: Log<I::TOuter>,
+    pub log: Log<I::Outer>,
 }
 
-impl<I: NestedInit> NestedInit for RecInit<I> {
-    type TOuter = I::TOuter;
-    type TInner = I::TInner;
-    fn init<R: Rng + ?Sized>(&self, outer: Self::TOuter, rng: &mut R) -> Vec<Particle<Self::TInner>> {
+impl<I: Seeder> Seeder for RecInit<I> {
+    type Outer = I::Outer;
+    type Inner = I::Inner;
+    fn seed<R: Rng + ?Sized>(&self, outer: Self::Outer, rng: &mut R) -> Vec<Particle<Self::Inner>> {
         self.log.push(Event::Init(outer));
-        self.inner.init(outer, rng)
+        self.inner.seed(outer, rng)
     }
 }
 
@@ -202,15 +202,15 @@ impl<U, R, C> ConstrictedPso<U, R, C> {
     }
 }
 
-impl<U, R, C: Copy> Contextful for ConstrictedPso<U, R, C> {
-    type TContext = C;
-    fn set_context(&mut self, _: C) {}
+impl<U, R, C: Copy> OuterAware for ConstrictedPso<U, R, C> {
+    type Outer = C;
+    fn see_outer(&mut self, _: C) {}
 }
 
-impl<U: Unit, R: Rng, C: Copy> Mover for ConstrictedPso<U, R, C> {
-    type TUnit = U;
-    type TCommon = GBest<U>;
-    fn update(&mut self, common: &GBest<U>, p: ParticleMut<'_, U>) {
+impl<U: Point, R: Rng, C: Copy> Rule for ConstrictedPso<U, R, C> {
+    type Pos = U;
+    type Shared = BestSoFar<U>;
+    fn apply(&mut self, common: &BestSoFar<U>, p: ParticleView<'_, U>) {
         const CHI: f64 = 0.7298;
         const PHI: f64 = 2.05;
         let rng = &mut self.rng;

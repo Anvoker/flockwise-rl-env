@@ -13,9 +13,9 @@ mod hidden_common;
 use hidden_common::*;
 
 use common::*;
-use nestswarm::{
-    Boundary, BoundedMover, Contextful, FitCalc, GBestSearcherOne, GBestSearcherTwo,
-    GBestSinglePMover, NestedInit, NestedMover, OnPart, Particle, SearcherIter,
+use flockwise::{
+    Region, Confined, OuterAware, Objective, Swarm1, Swarm2,
+    PsoRule, Seeder, InnerSearch, ForField, Particle, Run,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -42,56 +42,56 @@ impl Prob {
 
 #[derive(Clone, Debug)]
 struct Outer(Prob);
-impl Contextful for Outer {
-    type TContext = ();
-    fn set_context(&mut self, _: ()) {}
+impl OuterAware for Outer {
+    type Outer = ();
+    fn see_outer(&mut self, _: ()) {}
 }
-impl FitCalc for Outer {
-    type T = Pq;
-    fn calculate_fit(&self, v: Pq) -> f64 {
+impl Objective for Outer {
+    type Pos = Pq;
+    fn score(&self, v: Pq) -> f64 {
         self.0.fitness(v.p.0, v.q.0)
     }
 }
 
 #[derive(Clone, Debug)]
 struct PBox;
-impl Contextful for PBox {
-    type TContext = ();
-    fn set_context(&mut self, _: ()) {}
+impl OuterAware for PBox {
+    type Outer = ();
+    fn see_outer(&mut self, _: ()) {}
 }
-impl Boundary for PBox {
-    type T = P;
-    fn handle(&self, p: P) -> P {
+impl Region for PBox {
+    type Pos = P;
+    fn confine(&self, p: P) -> P {
         P(clamp(p.0, [-40.0; K], [40.0; K]))
     }
 }
 
 #[derive(Clone, Debug)]
 struct InnerQ(Prob, Pq);
-impl Contextful for InnerQ {
-    type TContext = Pq;
-    fn set_context(&mut self, v: Pq) {
+impl OuterAware for InnerQ {
+    type Outer = Pq;
+    fn see_outer(&mut self, v: Pq) {
         self.1 = v;
     }
 }
-impl FitCalc for InnerQ {
-    type T = Q;
-    fn calculate_fit(&self, q: Q) -> f64 {
+impl Objective for InnerQ {
+    type Pos = Q;
+    fn score(&self, q: Q) -> f64 {
         self.0.fitness(self.1.p.0, q.0)
     }
 }
 
 #[derive(Clone, Debug)]
 struct QBounds(Prob, Pq);
-impl Contextful for QBounds {
-    type TContext = Pq;
-    fn set_context(&mut self, v: Pq) {
+impl OuterAware for QBounds {
+    type Outer = Pq;
+    fn see_outer(&mut self, v: Pq) {
         self.1 = v;
     }
 }
-impl Boundary for QBounds {
-    type T = Q;
-    fn handle(&self, q: Q) -> Q {
+impl Region for QBounds {
+    type Pos = Q;
+    fn confine(&self, q: Q) -> Q {
         let p = self.1.p.0;
         Q(clamp(q.0, add(p, -self.0.w), add(p, self.0.w)))
     }
@@ -99,10 +99,10 @@ impl Boundary for QBounds {
 
 #[derive(Clone, Debug)]
 struct QInit(Prob, usize);
-impl NestedInit for QInit {
-    type TOuter = Pq;
-    type TInner = Q;
-    fn init<R: Rng + ?Sized>(&self, v: Pq, rng: &mut R) -> Vec<Particle<Q>> {
+impl Seeder for QInit {
+    type Outer = Pq;
+    type Inner = Q;
+    fn seed<R: Rng + ?Sized>(&self, v: Pq, rng: &mut R) -> Vec<Particle<Q>> {
         let p = v.p.0;
         (0..self.1)
             .map(|_| Particle::new(Q(uniform(rng, add(p, -self.0.w), add(p, self.0.w))), Q::default()))
@@ -117,15 +117,15 @@ fn reordered_parts_in_five_dimensions() {
     let q_star: [f64; K] = std::array::from_fn(|i| prob.a[i] + prob.c[i].clamp(-prob.w, prob.w));
 
     for seed in seed_base()..seed_base() + 3 {
-        let inner = GBestSearcherOne::new(
+        let inner = Swarm1::new(
             InnerQ(prob, Pq::default()),
-            BoundedMover::new(GBestSinglePMover::new(CONFIG, StdRng::seed_from_u64(seed * 7)), QBounds(prob, Pq::default())),
+            Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(seed * 7)), QBounds(prob, Pq::default())),
         );
 
-        let mut outer = GBestSearcherTwo::new(
+        let mut outer = Swarm2::new(
             Outer(prob),
-            BoundedMover::new(GBestSinglePMover::new(CONFIG, StdRng::seed_from_u64(seed * 7 + 2)), PBox).on_part::<P>(),
-            NestedMover::new(40, inner, QInit(prob, 12), StdRng::seed_from_u64(seed * 7 + 1)),
+            Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(seed * 7 + 2)), PBox).for_field::<P>(),
+            InnerSearch::new(40, inner, QInit(prob, 12), StdRng::seed_from_u64(seed * 7 + 1)),
         );
 
         let mut rng = StdRng::seed_from_u64(seed * 7 + 3);
@@ -137,7 +137,7 @@ fn reordered_parts_in_five_dimensions() {
             })
             .collect();
 
-        let best = SearcherIter::new(80, &mut outer, &mut group).last().unwrap().best_pos;
+        let best = Run::new(80, &mut outer, &mut group).last().unwrap().best_pos;
         let dp = max_abs_diff(best.p.0, p_star);
         let dq = max_abs_diff(best.q.0, q_star);
         assert!(dp < 0.05 && dq < 0.05, "seed {seed}: {best:?}, dp {dp}, dq {dq}");
@@ -149,18 +149,18 @@ fn nested_mover_first_composes_and_delivers_context() {
     let prob = Prob { a: [1.0, -1.0, 2.0, 0.5, -2.5], c: [2.0, -0.3, 0.0, -1.7, 0.6], w: 0.8 };
     let log = Log::<Pq>::new();
 
-    let inner = GBestSearcherOne::new(
+    let inner = Swarm1::new(
         RecFit::new(InnerQ(prob, Pq::default()), log.clone()),
-        BoundedMover::new(
-            GBestSinglePMover::new(CONFIG, StdRng::seed_from_u64(1)),
+        Confined::new(
+            PsoRule::new(CONFIG, StdRng::seed_from_u64(1)),
             RecBound::new(QBounds(prob, Pq::default()), log.clone()),
         ),
     );
 
-    let mut outer = GBestSearcherTwo::new(
+    let mut outer = Swarm2::new(
         Outer(prob),
-        NestedMover::new(4, inner, RecInit { inner: QInit(prob, 3), log: log.clone() }, StdRng::seed_from_u64(2)),
-        BoundedMover::new(GBestSinglePMover::new(CONFIG, StdRng::seed_from_u64(3)), PBox).on_part::<P>(),
+        InnerSearch::new(4, inner, RecInit { inner: QInit(prob, 3), log: log.clone() }, StdRng::seed_from_u64(2)),
+        Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(3)), PBox).for_field::<P>(),
     );
 
     let mut rng = StdRng::seed_from_u64(4);
@@ -171,7 +171,7 @@ fn nested_mover_first_composes_and_delivers_context() {
         })
         .collect();
 
-    SearcherIter::new(3, &mut outer, &mut group).for_each(drop);
+    Run::new(3, &mut outer, &mut group).for_each(drop);
     check_counts(&log.events(), 3 * 4, &["fit", "bound"]);
 }
 
@@ -180,14 +180,14 @@ fn nested_mover_first_still_converges_near_the_optimum() {
     let prob = Prob { a: [1.0, -1.0, 2.0, 0.5, -2.5], c: [2.0, -0.3, 0.0, -1.7, 0.6], w: 0.8 };
 
     for seed in seed_base()..seed_base() + 3 {
-        let inner = GBestSearcherOne::new(
+        let inner = Swarm1::new(
             InnerQ(prob, Pq::default()),
-            BoundedMover::new(GBestSinglePMover::new(CONFIG, StdRng::seed_from_u64(seed * 7)), QBounds(prob, Pq::default())),
+            Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(seed * 7)), QBounds(prob, Pq::default())),
         );
-        let mut outer = GBestSearcherTwo::new(
+        let mut outer = Swarm2::new(
             Outer(prob),
-            NestedMover::new(40, inner, QInit(prob, 12), StdRng::seed_from_u64(seed * 7 + 1)),
-            BoundedMover::new(GBestSinglePMover::new(CONFIG, StdRng::seed_from_u64(seed * 7 + 2)), PBox).on_part::<P>(),
+            InnerSearch::new(40, inner, QInit(prob, 12), StdRng::seed_from_u64(seed * 7 + 1)),
+            Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(seed * 7 + 2)), PBox).for_field::<P>(),
         );
 
         let mut rng = StdRng::seed_from_u64(seed * 7 + 3);
@@ -200,10 +200,10 @@ fn nested_mover_first_still_converges_near_the_optimum() {
             .collect();
         let start_best = group.iter().map(|g| prob.fitness(g.pos.p.0, g.pos.q.0)).fold(f64::NEG_INFINITY, f64::max);
 
-        let best = SearcherIter::new(80, &mut outer, &mut group).last().unwrap();
+        let best = Run::new(80, &mut outer, &mut group).last().unwrap();
         let dp = max_abs_diff(best.best_pos.p.0, prob.a);
         assert!(start_best < OPTIMUM - 5.0, "seed {seed}: the start should be far from the optimum");
-        assert!(best.best_fit > OPTIMUM - 1.0, "seed {seed}: fitness {} vs optimum {OPTIMUM}", best.best_fit);
+        assert!(best.best_score > OPTIMUM - 1.0, "seed {seed}: fitness {} vs optimum {OPTIMUM}", best.best_score);
         assert!(dp < 2.0, "seed {seed}: dp {dp}");
     }
 }
