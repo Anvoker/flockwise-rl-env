@@ -9,6 +9,12 @@ task=$(cd "$1" && pwd)
 runs=$2
 jobs=${3:-4}
 work=${4:-$(mktemp -d)}
+mkdir -p "$work"
+work=$(cd "$work" && pwd)
+# "$work/calibration" is deleted below: refuse an empty or root work dir.
+case "$work" in
+    "" | "/" | "/c" | "/c/") echo "refusing to use work dir '$work'" >&2; exit 1 ;;
+esac
 here=$(cd "$(dirname "$0")" && pwd)
 
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$work/target}"

@@ -23,6 +23,27 @@ On 2026-02-03 the author committed a design for running a PSO inside a PSO. Sail
 
 The task starts from the 2026-02-03 state, with the sailing domain replaced (see [Domain](#domain)).
 
+### Version 2 (2026-10-26)
+
+Version 1 turned out far too easy: Claude Sonnet 5.5 solved it in 7 turns (see [Calibration](#calibration)). Version 2 changes these things. The sections below still describe the design in general and use v1's names where they discuss v1.
+
+- **New vocabulary.** swarmkit is public, including on crates.io, so v1's names (`GBestSearcherOne`, `NestedMover`, `Contextful`, ...) were cues to a published solution. Every name is now plain and new: crate `flockwise`, `Point`, `OuterAware`/`see_outer`, `Objective`/`score`, `Region`/`confine`, `Rule`/`apply`, `Seeder`, `BestSoFar`, `ParticleView`, `PsoParams`, `PsoRule`, `Swarm1`, `Swarm2`, `Confined`, `ForField`/`for_field`, `InnerSearch`, `Search`, `Run`.
+- **Three field traits instead of one.** `SplitFrom` (a view of one field of a particle), `ReadFrom` (read a field out of a whole position) and `WriteInto` (write a field back), each with its own `Whole`. That is the shape of the original code's three traits. The library has to tie them together itself, which brings back the inference work of 2026-02-05. With one trait, the library could derive all three operations from a single accessor.
+- **A real user of the library: drone delivery routes** (`src/routes/`). An outer search over waypoints, and for every candidate route an inner search over leg timings. Each leg's fastest possible duration depends on the wind where and when it's flown, so it depends on the waypoints and on how long the earlier legs took. Its region therefore has to be shown the outer route and confine legs in order. That's the structure of the original sailing code, written fresh, with its own physics and names. The model (`src/routes/model.rs`) is locked like `api.rs`, because the verifier scores routes with it. The planner (`src/routes/plan.rs`) is agent code. In the starting state it's written against the old design, function-pointer inner search included, so the library doesn't compile, as at `5e45776`, where all 15 errors were in the sailing module.
+- **Fewer visible examples.** The role-swap test is hidden now. Visible: single search, the PSO update, two-level nesting, routes, and the Miri composition.
+- **Offline docs.** The standard library's docs (the `rust-docs` component) and the dependencies' docs (`cargo doc`) are in the image. docs.rs stays unreachable, because it hosts swarmkit's docs.
+- **The instruction states intent,** as described under the decisions below.
+
+**Calibrating the routes checks.** In the first version of the model, drag was so small that flying every leg as fast as possible was optimal, so the inner timing search had nothing to do (the same median score with and without it). Raising drag to 0.2 puts the optimal airspeed at roughly `((1 + w·hover) / (2·w·drag))^(1/3)`, inside the limits. Over 300 runs per scenario, the planner's results also turned out bimodal in one scenario: some runs go around a zone on the worse side. So each scenario checks what it can tell apart, using the best of 3 runs:
+
+| Scenario | Reference, worst best-of-3 | Same waypoints, fastest timings | Threshold | What it checks |
+|---|---|---|---|---|
+| B (visible) | −71.3 | about −190 | −80 | timing quality |
+| C (hidden) | −9.85 | −11.96 | −11.0 | timing quality under other wind and weights |
+| A (hidden) | −25.4 | overlaps | −35 | routing around zones |
+
+Every run must also return a feasible route, within a tolerance of 0.001. A stricter tolerance (0.000001) caused false failures: the objective penalizes zone intrusion at 1,000 per unit, so cutting a corner by 0.0001 costs only 0.1 points and saves distance, and the optimizer takes it. The largest cut seen in 6,000 plans was about 0.00012. The timing threshold in C was also moved from −10.5 to −11.0 after one false failure in 1,000 runs, which still leaves it about 1 point above the fastest-timings mode.
+
 ### What the change makes possible
 
 Each capability below was impossible in the starting state. Verification is built from this list: each one is proven by code that compiles and runs, not by inspecting the agent's source.
@@ -176,12 +197,15 @@ Adapted from the library's own history after 2026-02-06 (owned searchers, the ne
 
 `tools/mutants.py` takes the reference solution, puts in one known bug at a time, and runs the full verifier. Every mutant must fail at least one check. The mutants include the real stale-global-best bug, context never set, set too late, or not forwarded to boundaries or movers, both bugs left in the starting state, one random factor per particle instead of per coordinate, a part adapter shown the wrong best, a nested mover that never writes back, ignoring the given RNG, and a global best shared through `Arc<Mutex>` or `Rc<RefCell>`.
 
+The same tool also runs **alternative valid solutions** (`--alternatives`), which must all pass: scoring every particle before moving any, an `Arc<Mutex>` best so far with a deep `Clone`, and an inner search cloned fresh for every particle instead of being reset. The mutants show the verifier rejects what's wrong; the alternatives show it accepts reasonable designs that differ from the reference.
+
 `tools/calibrate.sh` runs the reference's tests over many disjoint seed ranges and counts how often each one fails by bad luck. Budgets and thresholds were adjusted until every test file had 0 failures in 1,000 runs (the independence test in 3,000). By the rule of three, that puts each file's false-failure rate below 0.3% with 95% confidence.
 
 ### Build risks
 
 - The reference solution is built before the tests are final. If it can't satisfy a locked call site without annotations of internals, the call site changes, not the rule.
 - Miri must work offline in the image: install the nightly with `rust-src` and run `cargo miri setup` while the image is built. Also set `MIRI_SYSROOT`, or cargo-miri tries to rebuild the sysroot in every container and fails over the image layer.
+- Never share one Cargo target directory between different source trees (the reference, mutants, alternatives). Test binaries get the same file names in both, so a calibration run can silently execute a mutant's binary. This happened once: the reference seemed to fail 1,997 of 2,000 routes runs, at exactly the scores of the timing-skip mutant built just before. `tools/selftest.sh` gives each part its own directory.
 - Rust doesn't guarantee the precision of float functions like `powi`, and Miri varies it on purpose. Tests that compare results exactly must use only operations IEEE 754 makes exact (`d * d`, not `powi(2)`). Found when the clone-equality check failed under Miri only.
 
 ## Calibration
@@ -193,6 +217,8 @@ Adapted from the library's own history after 2026-02-06 (owned searchers, the ne
 | 2026-10-26 | nested-search v1 | Claude Sonnet 5.5 (subscription) | Claude Code via Harbor 0.25.0 | 1 h agent time, network limited to the model API | 1 | Pass: 7 turns, 130 s agent time, about $0.40 at API prices. A genuine solution, close to the reference's design, with no hacks. |
 
 One attempt isn't a pass rate, but it shows v1 is far too easy for current mid-size models: the solve took no exploration and one fix.
+
+The author's prediction before v2's trial: still too easy. The agreed plan: if Sonnet 5.5 passes v2, merge task 2 into this one (reproducible parallelism) and measure again. A failure counts only if it's fair, meaning the agent's solution is really wrong and not rejected by an unfair check.
 
 ### Plan
 

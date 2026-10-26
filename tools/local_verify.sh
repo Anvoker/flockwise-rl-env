@@ -3,11 +3,15 @@
 # directory. Usage: tools/local_verify.sh <task dir> <src dir> [work dir]
 # Exit status: 0 if every check passes.
 set -uo pipefail
-task=$(cd "$1" && pwd)
-src=$(cd "$2" && pwd)
+task=$(cd "$1" && pwd) || exit 1
+src=$(cd "$2" && pwd) || exit 1
 work=${3:-$(mktemp -d)}
-mkdir -p "$work"
-work=$(cd "$work" && pwd)
+mkdir -p "$work" && work=$(cd "$work" && pwd) || exit 1
+# Everything deleted below lives under $work: refuse anything that isn't a
+# real, non-root directory, so a failed step can never turn into "rm -rf /app".
+case "$work" in
+    "" | "/" | "/c" | "/c/") echo "refusing to use work dir '$work'" >&2; exit 1 ;;
+esac
 rm -rf "$work/app"
 cp -r "$task/environment/repo" "$work/app"
 rm -rf "$work/app/src"

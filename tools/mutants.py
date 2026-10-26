@@ -4,6 +4,7 @@ Each mutant is the reference solution with one bug put in. Every mutant must
 fail at least one check. Usage:
 
     python -I tools/mutants.py <task dir> <work dir> [mutant name ...]
+    python -I tools/mutants.py <task dir> <work dir> --alternatives
 """
 
 import os
@@ -12,85 +13,171 @@ import subprocess
 import sys
 from pathlib import Path
 
+NL = "\n"
+
 # name: (what the bug is, [(file, old, new, count)]); count 0 means all.
 MUTANTS = {
-    "no_gbest_reset": (
-        "Searchers never reset their global best: the real bug from 2026-02-06 to 2026-04-22",
-        [("gbest.rs", "fn begin(&mut self) {\n        self.gbest = GBest::new();\n    }", "fn begin(&mut self) {}", 0)],
+    "no_best_reset": (
+        "Searches never reset their best so far: the real bug from 2026-02-06 to 2026-04-22",
+        [("swarm.rs", "fn begin(&mut self) {" + NL + "        self.best = BestSoFar::new();" + NL + "    }", "fn begin(&mut self) {}", 0)],
     ),
-    "nested_sets_no_context": (
-        "The nested mover never passes the outer particle to the inner search",
-        [("movers.rs", "        self.searcher.set_context(*p.pos);\n", "", 1)],
+    "inner_sees_nothing": (
+        "The inner search is never shown the outer particle",
+        [("rules.rs", "        self.search.see_outer(*p.pos);" + NL, "", 1)],
     ),
-    "context_after_search": (
-        "The nested mover passes the outer particle only after the inner search ran",
+    "outer_shown_after_search": (
+        "The inner search is shown the outer particle only after it ran",
         [
-            ("movers.rs", "        self.searcher.set_context(*p.pos);\n\n", "", 1),
-            ("movers.rs", ".last();\n", ".last();\n        self.searcher.set_context(*p.pos);\n", 1),
+            ("rules.rs", "        self.search.see_outer(*p.pos);" + NL + NL, "", 1),
+            ("rules.rs", ".last();" + NL, ".last();" + NL + "        self.search.see_outer(*p.pos);" + NL, 1),
         ],
     ),
-    "boundary_gets_no_context": (
-        "Bounded movers don't forward context to their boundary",
-        [("movers.rs", "        self.boundary.set_context(context);\n", "", 1)],
+    "region_sees_nothing": (
+        "Confined rules don't show the outer particle to their region",
+        [("rules.rs", "        self.region.see_outer(outer);" + NL, "", 1)],
     ),
-    "movers_get_no_context": (
-        "Searchers forward context to the fitness only, not to their movers",
+    "rules_see_nothing": (
+        "Swarms show the outer particle to the objective only, not to their rules",
         [
-            ("gbest.rs", "        self.tu1.set_context(context);\n", "", 0),
-            ("gbest.rs", "        self.tu2.set_context(context);\n", "", 0),
+            ("swarm.rs", "        self.r1.see_outer(outer);" + NL, "", 0),
+            ("swarm.rs", "        self.r2.see_outer(outer);" + NL, "", 0),
         ],
     ),
     "one_iteration_short": (
-        "A search runs one iteration fewer than asked: the starting state's off-by-one",
-        [("searcher.rs", "if self.iteration >= self.max_iteration", "if self.iteration + 1 >= self.max_iteration", 1)],
+        "A run does one iteration fewer than asked: the starting state's off-by-one",
+        [("search.rs", "if self.done >= self.iterations", "if self.done + 1 >= self.iterations", 1)],
     ),
     "reversed_velocity": (
         "Velocity is set to minus the step taken: the starting state's PSO bug",
-        [("gbest.rs", "        *p.pos = *p.pos + *p.vel;\n", "        let old = *p.pos;\n        *p.pos = *p.pos + *p.vel;\n        *p.vel = old - *p.pos;\n", 1)],
+        [(
+            "swarm.rs",
+            "        *p.pos = *p.pos + *p.vel;" + NL,
+            "        let old = *p.pos;" + NL + "        *p.pos = *p.pos + *p.vel;" + NL + "        *p.vel = old - *p.pos;" + NL,
+            1,
+        )],
     ),
     "scalar_random_factors": (
         "PSO draws one random factor per particle, not per coordinate: the starting state's version",
         [
-            ("gbest.rs", "let cognitive = (*p.best_pos - *p.pos).map_scalars(|d| d * c1 * rng.random::<f64>());",
-             "let (r1, r2) = (rng.random::<f64>(), rng.random::<f64>());\n        let cognitive = (*p.best_pos - *p.pos) * (c1 * r1);", 1),
-            ("gbest.rs", "let social = (common.best_pos - *p.pos).map_scalars(|d| d * c2 * rng.random::<f64>());",
-             "let social = (common.best_pos - *p.pos) * (c2 * r2);", 1),
+            (
+                "swarm.rs",
+                "let cognitive = (*p.best_pos - *p.pos).map_scalars(|d| d * c1 * rng.random::<f64>());",
+                "let (r1, r2) = (rng.random::<f64>(), rng.random::<f64>());" + NL + "        let cognitive = (*p.best_pos - *p.pos) * (c1 * r1);",
+                1,
+            ),
+            (
+                "swarm.rs",
+                "let social = (shared.best_pos - *p.pos).map_scalars(|d| d * c2 * rng.random::<f64>());",
+                "let social = (shared.best_pos - *p.pos) * (c2 * r2);",
+                1,
+            ),
         ],
     ),
-    "part_ignores_global_best": (
-        "A part-restricted mover is shown the particle's personal best instead of the global best",
-        [("movers.rs", "best_pos: TMover::TUnit::get(&common.best_pos),", "best_pos: TMover::TUnit::get(&*p.best_pos),", 1)],
+    "field_ignores_best": (
+        "A field-restricted rule is shown the particle's own best instead of the swarm's",
+        [("rules.rs", "best_pos: <R::Pos as ReadFrom>::read(&shared.best_pos),", "best_pos: <R::Pos as ReadFrom>::read(&*p.best_pos),", 1)],
     ),
-    "nested_writes_nothing": (
-        "The nested mover runs the inner search but never writes the result back",
-        [("movers.rs", "            *TInit::TInner::get_mut(p.pos) = best.best_pos;\n", "            let _ = best;\n", 1)],
+    "inner_writes_nothing": (
+        "The inner search runs but its result is never written back",
+        [("rules.rs", "            best.best_pos.write(p.pos);" + NL, "            let _ = best;" + NL, 1)],
     ),
     "ignores_given_rng": (
-        "The nested mover uses the thread RNG instead of the one it was given",
-        [("movers.rs", "self.init.init(*p.pos, &mut self.rng)", "self.init.init(*p.pos, &mut rand::rng())", 1)],
+        "The inner search seeds from the thread RNG instead of the one it was given",
+        [("rules.rs", "self.seeder.seed(*p.pos, &mut self.rng)", "self.seeder.seed(*p.pos, &mut rand::rng())", 1)],
     ),
-    "shared_gbest_arc": (
-        "The global best lives behind an Arc<Mutex>, so clones share it",
+    "planner_skips_timing": (
+        "The planner's inner timing search runs zero iterations",
+        [("routes/plan.rs", "            budget.inner_iterations," + NL, "            0," + NL, 1)],
+    ),
+    "shared_best_arc": (
+        "The best so far lives behind an Arc<Mutex>, so clones share it",
         [
-            ("gbest.rs", "    gbest: GBest<TFit::T>,\n", "    gbest: std::sync::Arc<std::sync::Mutex<GBest<TFit::T>>>,\n", 0),
-            ("gbest.rs", "gbest: GBest::new(),", "gbest: Default::default(),", 0),
-            ("gbest.rs", "self.gbest = GBest::new();", "*self.gbest.lock().unwrap() = GBest::new();", 0),
-            ("gbest.rs", "evaluate(&self.fit_calc, &mut self.gbest, p);", "evaluate(&self.fit_calc, &mut self.gbest.lock().unwrap(), p);", 0),
-            ("gbest.rs", "self.tu1.update(&self.gbest, p.as_mut());", "let g = *self.gbest.lock().unwrap();\n            self.tu1.update(&g, p.as_mut());", 0),
-            ("gbest.rs", "self.tu2.update(&self.gbest, p.as_mut());", "let g = *self.gbest.lock().unwrap();\n            self.tu2.update(&g, p.as_mut());", 0),
-            ("gbest.rs", "        self.gbest\n    }", "        *self.gbest.lock().unwrap()\n    }", 0),
+            ("swarm.rs", "    best: BestSoFar<O::Pos>," + NL, "    best: std::sync::Arc<std::sync::Mutex<BestSoFar<O::Pos>>>," + NL, 0),
+            ("swarm.rs", "best: BestSoFar::new(),", "best: Default::default(),", 0),
+            ("swarm.rs", "self.best = BestSoFar::new();", "*self.best.lock().unwrap() = BestSoFar::new();", 0),
+            ("swarm.rs", "score(&self.objective, &mut self.best, p);", "score(&self.objective, &mut self.best.lock().unwrap(), p);", 0),
+            ("swarm.rs", "self.r1.apply(&self.best, p.view());", "let b = *self.best.lock().unwrap();" + NL + "            self.r1.apply(&b, p.view());", 0),
+            ("swarm.rs", "self.r2.apply(&self.best, p.view());", "let b = *self.best.lock().unwrap();" + NL + "            self.r2.apply(&b, p.view());", 0),
+            ("swarm.rs", "        self.best" + NL + "    }", "        *self.best.lock().unwrap()" + NL + "    }", 0),
         ],
     ),
-    "shared_gbest_rc": (
-        "The global best lives behind an Rc<RefCell>, so searchers aren't Send",
+    "shared_best_rc": (
+        "The best so far lives behind an Rc<RefCell>, so searches aren't Send",
         [
-            ("gbest.rs", "    gbest: GBest<TFit::T>,\n", "    gbest: std::rc::Rc<std::cell::RefCell<GBest<TFit::T>>>,\n", 0),
-            ("gbest.rs", "gbest: GBest::new(),", "gbest: Default::default(),", 0),
-            ("gbest.rs", "self.gbest = GBest::new();", "*self.gbest.borrow_mut() = GBest::new();", 0),
-            ("gbest.rs", "evaluate(&self.fit_calc, &mut self.gbest, p);", "evaluate(&self.fit_calc, &mut self.gbest.borrow_mut(), p);", 0),
-            ("gbest.rs", "self.tu1.update(&self.gbest, p.as_mut());", "let g = *self.gbest.borrow();\n            self.tu1.update(&g, p.as_mut());", 0),
-            ("gbest.rs", "self.tu2.update(&self.gbest, p.as_mut());", "let g = *self.gbest.borrow();\n            self.tu2.update(&g, p.as_mut());", 0),
-            ("gbest.rs", "        self.gbest\n    }", "        *self.gbest.borrow()\n    }", 0),
+            ("swarm.rs", "    best: BestSoFar<O::Pos>," + NL, "    best: std::rc::Rc<std::cell::RefCell<BestSoFar<O::Pos>>>," + NL, 0),
+            ("swarm.rs", "best: BestSoFar::new(),", "best: Default::default(),", 0),
+            ("swarm.rs", "self.best = BestSoFar::new();", "*self.best.borrow_mut() = BestSoFar::new();", 0),
+            ("swarm.rs", "score(&self.objective, &mut self.best, p);", "score(&self.objective, &mut self.best.borrow_mut(), p);", 0),
+            ("swarm.rs", "self.r1.apply(&self.best, p.view());", "let b = *self.best.borrow();" + NL + "            self.r1.apply(&b, p.view());", 0),
+            ("swarm.rs", "self.r2.apply(&self.best, p.view());", "let b = *self.best.borrow();" + NL + "            self.r2.apply(&b, p.view());", 0),
+            ("swarm.rs", "        self.best" + NL + "    }", "        *self.best.borrow()" + NL + "    }", 0),
+        ],
+    ),
+}
+
+
+# Valid solutions that make other reasonable design choices than the reference.
+# Every one of them must pass every check.
+ALTERNATIVES = {
+    "score_all_then_move_all": (
+        "Each iteration scores every particle first, then moves every particle",
+        [
+            (
+                "swarm.rs",
+                "            score(&self.objective, &mut self.best, p);" + NL + "            self.r1.apply(&self.best, p.view());" + NL + "        }" + NL,
+                "            score(&self.objective, &mut self.best, p);" + NL + "        }" + NL + "        for p in particles.iter_mut() {" + NL + "            self.r1.apply(&self.best, p.view());" + NL + "        }" + NL,
+                1,
+            ),
+            (
+                "swarm.rs",
+                "            score(&self.objective, &mut self.best, p);" + NL + "            self.r1.apply(&self.best, p.view());" + NL + "            self.r2.apply(&self.best, p.view());" + NL,
+                "            score(&self.objective, &mut self.best, p);" + NL + "        }" + NL + "        for p in particles.iter_mut() {" + NL + "            self.r1.apply(&self.best, p.view());" + NL + "            self.r2.apply(&self.best, p.view());" + NL,
+                1,
+            ),
+        ],
+    ),
+    "arc_mutex_with_deep_clone": (
+        "The best so far lives behind an Arc<Mutex> inside one swarm, and Clone copies it",
+        [edit for edit in MUTANTS["shared_best_arc"][1]]
+        + [
+            ("swarm.rs", "#[derive(Clone, Debug)]" + NL + "pub struct Swarm1", "#[derive(Debug)]" + NL + "pub struct Swarm1", 1),
+            ("swarm.rs", "#[derive(Clone, Debug)]" + NL + "pub struct Swarm2", "#[derive(Debug)]" + NL + "pub struct Swarm2", 1),
+            (
+                "swarm.rs",
+                "fn score<O: Objective>(",
+                "impl<O: Objective + Clone, R1: Clone> Clone for Swarm1<O, R1> {" + NL
+                + "    fn clone(&self) -> Self {" + NL
+                + "        let best = *self.best.lock().unwrap();" + NL
+                + "        Swarm1 { objective: self.objective.clone(), best: std::sync::Arc::new(std::sync::Mutex::new(best)), r1: self.r1.clone() }" + NL
+                + "    }" + NL
+                + "}" + NL + NL
+                + "impl<O: Objective + Clone, R1: Clone, R2: Clone> Clone for Swarm2<O, R1, R2> {" + NL
+                + "    fn clone(&self) -> Self {" + NL
+                + "        let best = *self.best.lock().unwrap();" + NL
+                + "        Swarm2 { objective: self.objective.clone(), best: std::sync::Arc::new(std::sync::Mutex::new(best)), r1: self.r1.clone(), r2: self.r2.clone() }" + NL
+                + "    }" + NL
+                + "}" + NL + NL
+                + "fn score<O: Objective>(",
+                1,
+            ),
+        ],
+    ),
+    "fresh_inner_search_per_particle": (
+        "The inner search is cloned from a pristine template for every particle, instead of being reset",
+        [
+            (
+                "rules.rs",
+                "        self.search.see_outer(*p.pos);" + NL,
+                "        let mut search = self.search.clone();" + NL + "        search.see_outer(*p.pos);" + NL,
+                1,
+            ),
+            ("rules.rs", "Run::new(self.iterations, &mut self.search, &mut particles)", "Run::new(self.iterations, &mut search, &mut particles)", 1),
+            (
+                "rules.rs",
+                "impl<S, D, R, Outer> Rule for InnerSearch<S, D, R, Outer>" + NL + "where" + NL,
+                "impl<S, D, R, Outer> Rule for InnerSearch<S, D, R, Outer>" + NL + "where" + NL + "    S: Clone," + NL,
+                1,
+            ),
         ],
     ),
 }
@@ -104,16 +191,41 @@ def apply(src: Path, edits) -> None:
         if found == 0 or (count and found < count):
             raise SystemExit(f"{name}: pattern not found: {old!r}")
         text = text.replace(old, new) if count == 0 else text.replace(old, new, count)
-        path.write_text(text, encoding="utf-8")
+        path.write_text(text, encoding="utf-8", newline=NL)
+
+
+def run_alternatives(task: Path, work: Path, bash: str, verify: Path) -> None:
+    rejected = []
+    for name, (why, edits) in ALTERNATIVES.items():
+        src = work / "src" / name
+        shutil.rmtree(src, ignore_errors=True)
+        shutil.copytree(task / "solution" / "src", src)
+        apply(src, edits)
+        run = subprocess.run(
+            [bash, verify.as_posix(), task.as_posix(), src.as_posix(), (work / "runs" / name).as_posix()],
+            capture_output=True,
+            text=True,
+        )
+        failed = [line.split()[1] for line in run.stdout.splitlines() if line.startswith("FAIL")]
+        if failed:
+            print(f"REJECTED {name}: {why}: {', '.join(failed)}")
+            rejected.append(name)
+        else:
+            print(f"accepted {name}")
+        sys.stdout.flush()
+    print(f"{len(ALTERNATIVES) - len(rejected)}/{len(ALTERNATIVES)} alternatives accepted")
+    sys.exit(1 if rejected else 0)
 
 
 def main() -> None:
     task = Path(sys.argv[1]).resolve()
     work = Path(sys.argv[2]).resolve()
-    names = sys.argv[3:] or list(MUTANTS)
     verify = Path(__file__).resolve().parent / "local_verify.sh"
     # The bash that runs this script (Git Bash on Windows), not WSL's.
     bash = os.environ.get("BASH_EXE") or shutil.which("bash")
+    if sys.argv[3:] == ["--alternatives"]:
+        run_alternatives(task, work, bash, verify)
+    names = sys.argv[3:] or list(MUTANTS)
     escaped = []
 
     for name in names:
