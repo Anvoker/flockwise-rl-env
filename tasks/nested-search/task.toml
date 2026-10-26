@@ -1,0 +1,40 @@
+schema_version = "1.3"
+source = "Adapted from the early history of swarmkit (github.com/Anvoker/swarmkit), February 2026"
+
+# Only the agent's source directory reaches the verifier.
+artifacts = ["/app/src"]
+
+[task]
+name = "anvoker/nested-search"
+description = "Make a Rust PSO library support composable, nested searches with context passed between levels."
+authors = [{ name = "Andrei Ionescu" }]
+keywords = ["rust", "generics", "ownership", "type-inference", "optimization"]
+
+[metadata]
+category = "software-engineering"
+difficulty_explanation = "The starting design borrows its parts and builds inner searches from function pointers. Making it composable needs owned components, context threaded through wrappers and nesting levels, and APIs that infer every type from the arguments."
+
+[verifier]
+timeout_sec = 1800
+environment_mode = "separate"
+
+[verifier.environment]
+network_mode = "no-network"
+cpus = 2
+memory_mb = 4096
+
+[agent]
+timeout_sec = 3600
+# While the agent works it can reach only its model API. The public swarmkit
+# history contains a solution, so open network access would let it look one up.
+network_mode = "allowlist"
+allowed_hosts = ["api.anthropic.com", "api.deepseek.com"]
+
+[environment]
+build_timeout_sec = 1800
+cpus = 2
+memory_mb = 4096
+storage_mb = 10240
+# Setup (installing the agent's harness) needs the network; the agent run
+# itself is restricted in [agent] above.
+network_mode = "public"
