@@ -15,8 +15,8 @@ const CFG: PsoParams = PsoParams {
     social: 2.0,
 };
 
-fn pso(seed: u64) -> impl Rule<Pos = V, Shared = BestSoFar<V>, Outer = ()> {
-    PsoRule::new(CFG, StdRng::seed_from_u64(seed))
+fn pso() -> impl Rule<Pos = V, Shared = BestSoFar<V>, Outer = ()> {
+    PsoRule::new(CFG)
 }
 
 /// An RNG whose every uniform draw in [0, 1) is exactly 0.5, however it's drawn.
@@ -43,11 +43,7 @@ fn one_update_follows_the_formula() {
 
     let mut p = Particle::new(x, v);
     p.best_pos = pbest;
-    let mut mover = PsoRule::new(CFG, Half);
-    fn run(m: &mut impl Rule<Pos = V, Shared = BestSoFar<V>, Outer = ()>, g: V, p: &mut Particle<V>) {
-        m.apply(&BestSoFar { best_pos: g, best_score: 0.0 }, p.view());
-    }
-    run(&mut mover, gbest, &mut p);
+    pso().apply(&BestSoFar { best_pos: gbest, best_score: 0.0 }, &mut Half, p.view());
 
     let want_v: [f64; 6] = std::array::from_fn(|i| {
         0.5 * v.0[i] + 1.5 * 0.5 * (pbest.0[i] - x.0[i]) + 2.0 * 0.5 * (gbest.0[i] - x.0[i])
@@ -65,7 +61,7 @@ fn at_both_bests_only_inertia_remains() {
     let mut p = Particle::new(x, v);
     let common = BestSoFar { best_pos: x, best_score: 0.0 };
 
-    pso(1).apply(&common, p.view());
+    pso().apply(&common, &mut StdRng::seed_from_u64(1), p.view());
 
     assert_eq!(p.vel, v * 0.5);
     assert_eq!(p.pos, x + v * 0.5);
@@ -78,7 +74,7 @@ fn random_factors_are_drawn_per_coordinate() {
         p.best_pos = V([1.0; 6]);
         let common = BestSoFar { best_pos: V([1.0; 6]), best_score: 0.0 };
 
-        pso(seed).apply(&common, p.view());
+        pso().apply(&common, &mut StdRng::seed_from_u64(seed), p.view());
 
         // v_i = 1.5 * r1_i + 2.0 * r2_i, with r in [0, 1).
         for v in p.vel.0 {

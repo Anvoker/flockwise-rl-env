@@ -82,11 +82,11 @@ struct FitOn<U, C>(PhantomData<fn() -> (U, C)>);
 impl<U, C> FitOn<U, C> {
     fn new() -> Self { FitOn(PhantomData) }
 }
-impl<U, C: Copy> OuterAware for FitOn<U, C> {
+impl<U, C: Copy + Send + Sync> OuterAware for FitOn<U, C> {
     type Outer = C;
     fn see_outer(&mut self, _: C) {}
 }
-impl<U: Point, C: Copy> Objective for FitOn<U, C> {
+impl<U: Point, C: Copy + Send + Sync> Objective for FitOn<U, C> {
     type Pos = U;
     fn score(&self, _: U) -> f64 { 0.0 }
 }
@@ -97,11 +97,11 @@ struct BoundOn<U, C>(PhantomData<fn() -> (U, C)>);
 impl<U, C> BoundOn<U, C> {
     fn new() -> Self { BoundOn(PhantomData) }
 }
-impl<U, C: Copy> OuterAware for BoundOn<U, C> {
+impl<U, C: Copy + Send + Sync> OuterAware for BoundOn<U, C> {
     type Outer = C;
     fn see_outer(&mut self, _: C) {}
 }
-impl<U: Point, C: Copy> Region for BoundOn<U, C> {
+impl<U: Point, C: Copy + Send + Sync> Region for BoundOn<U, C> {
     type Pos = U;
     fn confine(&self, u: U) -> U { u }
 }

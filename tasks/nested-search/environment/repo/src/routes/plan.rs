@@ -38,7 +38,7 @@ pub fn plan(scenario: &Scenario, budget: &Budget, seed: u64) -> Route {
             let mut search = Swarm1::new(
                 &timing_objective,
                 &mut best,
-                PsoRule::new(params, StdRng::seed_from_u64(seed), &legs),
+                PsoRule::new(params, &legs),
             );
             // TODO: the route being timed isn't available here.
             let mut rng = StdRng::seed_from_u64(seed);
@@ -51,7 +51,7 @@ pub fn plan(scenario: &Scenario, budget: &Budget, seed: u64) -> Route {
     let mut search = Swarm2::new(
         &objective,
         &mut best,
-        PsoRule::new(params, StdRng::seed_from_u64(seed), &airspace),
+        PsoRule::new(params, &airspace),
         timing_rule,
     );
 

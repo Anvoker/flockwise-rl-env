@@ -2,7 +2,7 @@
 fn main() {
     let _ = Swarm1::new(
         FitOn::<W, ()>::new(),
-        Confined::new(PsoRule::new(cfg(), rng()), BoundOn::<X, ()>::new())
+        Confined::new(PsoRule::new(cfg()), BoundOn::<X, ()>::new())
             //CASE .for_field::<X>(),
             //FAIL .for_field::<T>(),
     );

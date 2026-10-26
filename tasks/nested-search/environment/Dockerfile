@@ -28,7 +28,7 @@ COPY repo/ /app/
 # expected to fail after the dependencies.
 RUN chmod +x ci.sh compile_checks/run.sh \
     && cargo fetch \
-    && cargo doc -p rand -p rand_core -p rand_chacha \
+    && cargo doc -p rand -p rand_core -p rand_chacha -p rayon -p rayon-core \
     && (cargo test --release --no-run || true) \
     && (cargo +"${MIRI_NIGHTLY}" miri test --no-run --test miri || true)
 

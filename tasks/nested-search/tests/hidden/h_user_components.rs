@@ -23,21 +23,21 @@ fn user_mover_inside_bounded_part_and_nested_search() {
         let inner = Swarm1::new(
             InnerFit::new(problem),
             Confined::new(
-                ConstrictedPso::with_rng(StdRng::seed_from_u64(seed * 10)),
+                ConstrictedPso::new(),
                 TBounds::new(problem),
             ),
         );
 
         let mut outer = Swarm2::new(
             OuterFit(problem),
-            Confined::new(ConstrictedPso::with_rng(StdRng::seed_from_u64(seed * 10 + 1)), XBounds(problem))
+            Confined::new(ConstrictedPso::new(), XBounds(problem))
                 .for_field::<X>(),
-            InnerSearch::new(30, inner, TInit { problem, count: 10 }, StdRng::seed_from_u64(seed * 10 + 2)),
+            InnerSearch::new(30, inner, TInit { problem, count: 10 }),
         );
 
         let mut rng = StdRng::seed_from_u64(seed * 10 + 3);
         let mut group = initial_group(&problem, 20, &mut rng);
-        let best = Run::new(60, &mut outer, &mut group).last().unwrap().best_pos;
+        let best = Run::new(60, &mut outer, &mut group, seed).last().unwrap().best_pos;
         let dx = max_abs_diff(best.x.0, x_star);
         let dt = max_abs_diff(best.t.0, t_star);
         assert!(dx < 0.05 && dt < 0.05, "seed {seed}: {best:?}, dx {dx}, dt {dt}");
@@ -52,17 +52,17 @@ fn user_mover_on_a_part_without_a_boundary() {
 
     let inner = Swarm1::new(
         RecFit::new(InnerFit::new(problem), log.clone()),
-        RecMover::new(ConstrictedPso::with_rng(StdRng::seed_from_u64(1)), log.clone()),
+        RecMover::new(ConstrictedPso::new(), log.clone()),
     );
 
     let mut outer = Swarm2::new(
         OuterFit(problem),
-        ConstrictedPso::with_rng(StdRng::seed_from_u64(2)).for_field::<X>(),
-        InnerSearch::new(4, inner, RecInit { inner: TInit { problem, count: 3 }, log: log.clone() }, StdRng::seed_from_u64(3)),
+        ConstrictedPso::new().for_field::<X>(),
+        InnerSearch::new(4, inner, RecInit { inner: TInit { problem, count: 3 }, log: log.clone() }),
     );
 
     let mut rng = StdRng::seed_from_u64(4);
     let mut group = initial_group(&problem, 5, &mut rng);
-    Run::new(3, &mut outer, &mut group).for_each(drop);
+    Run::new(3, &mut outer, &mut group, 0).for_each(drop);
     check_counts(&log.events(), 3 * 4, &["fit", "move"]);
 }

@@ -17,11 +17,11 @@ fn nested(problem: Problem, seed: u64) -> impl Rule<Pos = W, Shared = BestSoFar<
     let inner = Swarm1::new(
         InnerFit::new(problem),
         Confined::new(
-            PsoRule::new(CONFIG, StdRng::seed_from_u64(seed)),
+            PsoRule::new(CONFIG),
             TBounds::new(problem),
         ),
     );
-    InnerSearch::new(100, inner, TInit { problem, count: 40 }, StdRng::seed_from_u64(seed + 1))
+    InnerSearch::new(100, inner, TInit { problem, count: 40 })
 }
 
 #[test]
@@ -39,8 +39,9 @@ fn inner_search_for_b_does_not_reuse_the_result_for_a() {
         let mut b = Particle::new(W { x: X(x_b), t: T(x_b) }, W::default());
         let common = BestSoFar::new();
 
-        mover.apply(&common, a.view());
-        mover.apply(&common, b.view());
+        let mut rng = StdRng::seed_from_u64(seed);
+        mover.apply(&common, &mut rng, a.view());
+        mover.apply(&common, &mut rng, b.view());
 
         let want_a: [f64; K] = std::array::from_fn(|i| x_star[i] + problem.c[i].clamp(-problem.w, problem.w));
         let want_b: [f64; K] = std::array::from_fn(|i| x_b[i] + problem.c[i].clamp(-problem.w, problem.w));
@@ -71,7 +72,7 @@ fn repeated_runs_of_one_searcher_start_fresh() {
     let center = Arc::new(Mutex::new([1.0, 1.0, 1.0]));
     let mut searcher = Swarm1::new(
         MovingSphere(center.clone()),
-        PsoRule::new(CONFIG, StdRng::seed_from_u64(1)),
+        PsoRule::new(CONFIG),
     );
 
     let mut rng = StdRng::seed_from_u64(2);
@@ -82,14 +83,14 @@ fn repeated_runs_of_one_searcher_start_fresh() {
     };
 
     let mut g1 = group(0.0, 2.0, &mut rng);
-    let first = Run::new(40, &mut searcher, &mut g1).last().unwrap();
+    let first = Run::new(40, &mut searcher, &mut g1, 0).last().unwrap();
     assert!(max_abs_diff(first.best_pos.0, [1.0; K]) < 1e-2);
 
     // Move the target far away. The old best now scores about -300, but its
     // stored fitness from the first run is near 0.
     *center.lock().unwrap() = [-9.0, -9.0, -9.0];
     let mut g2 = group(-10.0, -8.0, &mut rng);
-    let second = Run::new(40, &mut searcher, &mut g2).last().unwrap();
+    let second = Run::new(40, &mut searcher, &mut g2, 0).last().unwrap();
     assert!(
         max_abs_diff(second.best_pos.0, [-9.0; K]) < 1e-2,
         "second run returned {:?}",
@@ -102,7 +103,7 @@ fn global_best_after_one_iteration_is_the_best_initial_position() {
     let problem = Problem::standard();
     let mut searcher = Swarm1::new(
         MovingSphere(Arc::new(Mutex::new(problem.a))),
-        PsoRule::new(CONFIG, StdRng::seed_from_u64(3)),
+        PsoRule::new(CONFIG),
     );
     let mut rng = StdRng::seed_from_u64(4);
     let mut group: Vec<Particle<X>> = (0..10)
@@ -110,7 +111,7 @@ fn global_best_after_one_iteration_is_the_best_initial_position() {
         .collect();
     let initial: Vec<X> = group.iter().map(|p| p.pos).collect();
 
-    let best = Run::new(1, &mut searcher, &mut group).next().unwrap();
+    let best = Run::new(1, &mut searcher, &mut group, 0).next().unwrap();
     let want = initial
         .iter()
         .copied()

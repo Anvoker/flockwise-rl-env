@@ -166,9 +166,9 @@ impl<M: Rule> OuterAware for RecMover<M> {
 impl<M: Rule> Rule for RecMover<M> {
     type Pos = M::Pos;
     type Shared = M::Shared;
-    fn apply(&mut self, common: &Self::Shared, p: ParticleView<'_, Self::Pos>) {
+    fn apply<R: Rng + ?Sized>(&self, common: &Self::Shared, rng: &mut R, p: ParticleView<'_, Self::Pos>) {
         self.log.push(Event::Move(self.context));
-        self.inner.apply(common, p);
+        self.inner.apply(common, rng, p);
     }
 }
 
@@ -189,31 +189,29 @@ impl<I: Seeder> Seeder for RecInit<I> {
 }
 
 /// A user-written PSO variant with a constriction factor, independent of the
-/// library's own mover. Generic over unit and context.
+/// library's own rule. Generic over unit and outer position.
 #[derive(Clone, Debug)]
-pub struct ConstrictedPso<U, R, C> {
-    pub rng: R,
+pub struct ConstrictedPso<U, C> {
     pub phantom: std::marker::PhantomData<fn() -> (U, C)>,
 }
 
-impl<U, R, C> ConstrictedPso<U, R, C> {
-    pub fn with_rng(rng: R) -> Self {
-        ConstrictedPso { rng, phantom: std::marker::PhantomData }
+impl<U, C> ConstrictedPso<U, C> {
+    pub fn new() -> Self {
+        ConstrictedPso { phantom: std::marker::PhantomData }
     }
 }
 
-impl<U, R, C: Copy> OuterAware for ConstrictedPso<U, R, C> {
+impl<U, C: Copy + Send + Sync> OuterAware for ConstrictedPso<U, C> {
     type Outer = C;
     fn see_outer(&mut self, _: C) {}
 }
 
-impl<U: Point, R: Rng, C: Copy> Rule for ConstrictedPso<U, R, C> {
+impl<U: Point, C: Copy + Send + Sync> Rule for ConstrictedPso<U, C> {
     type Pos = U;
     type Shared = BestSoFar<U>;
-    fn apply(&mut self, common: &BestSoFar<U>, p: ParticleView<'_, U>) {
+    fn apply<R: Rng + ?Sized>(&self, common: &BestSoFar<U>, rng: &mut R, p: ParticleView<'_, U>) {
         const CHI: f64 = 0.7298;
         const PHI: f64 = 2.05;
-        let rng = &mut self.rng;
         let cognitive = (*p.best_pos - *p.pos).map_scalars(|d| d * PHI * rng.random::<f64>());
         let social = (common.best_pos - *p.pos).map_scalars(|d| d * PHI * rng.random::<f64>());
         let v = *p.vel + cognitive + social;

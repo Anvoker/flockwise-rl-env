@@ -30,24 +30,22 @@ pub fn plan(scenario: &Scenario, budget: &Budget, seed: u64) -> Route {
 
     let timings = Swarm1::new(
         TimingObjective::new(s),
-        Confined::new(PsoRule::new(PARAMS, StdRng::seed_from_u64(seed ^ 0x51)), LegTimeRegion::new(s)),
+        Confined::new(PsoRule::new(PARAMS), LegTimeRegion::new(s)),
     );
 
     let mut search = Swarm2::new(
         RouteObjective::new(s),
-        Confined::new(PsoRule::new(PARAMS, StdRng::seed_from_u64(seed ^ 0x52)), AirspaceRegion::new(s))
-            .for_field::<Waypoints>(),
+        Confined::new(PsoRule::new(PARAMS), AirspaceRegion::new(s)).for_field::<Waypoints>(),
         InnerSearch::new(
             budget.inner_iterations,
             timings,
             TimingSeeder::new(s, budget.inner_particles),
-            StdRng::seed_from_u64(seed ^ 0x53),
         ),
     );
 
     let mut rng = StdRng::seed_from_u64(seed);
     let mut routes = s.initial_routes(budget.particles, &mut rng);
-    Run::new(budget.iterations, &mut search, &mut routes)
+    Run::new(budget.iterations, &mut search, &mut routes, seed)
         .last()
         .map(|best| best.best_pos)
         .unwrap_or_else(|| s.baseline())

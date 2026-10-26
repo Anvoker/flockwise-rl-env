@@ -16,16 +16,16 @@ const CFG: PsoParams = PsoParams {
 #[test]
 fn random_factors_differ_across_parts() {
     for seed in 0..10 {
-        let mut mover = PsoRule::new(CFG, StdRng::seed_from_u64(seed));
+        let mover = PsoRule::new(CFG);
         let mut p = Particle::new(W::default(), W::default());
         let one = W { x: X([1.0; K]), t: T([1.0; K]) };
         p.best_pos = one;
         let common = BestSoFar { best_pos: one, best_score: 0.0 };
 
-        fn run(m: &mut impl Rule<Pos = W, Shared = BestSoFar<W>, Outer = ()>, c: &BestSoFar<W>, p: &mut Particle<W>) {
-            m.apply(c, p.view());
+        fn run(m: &impl Rule<Pos = W, Shared = BestSoFar<W>, Outer = ()>, c: &BestSoFar<W>, p: &mut Particle<W>, seed: u64) {
+            m.apply(c, &mut StdRng::seed_from_u64(seed), p.view());
         }
-        run(&mut mover, &common, &mut p);
+        run(&mover, &common, &mut p, seed);
 
         let all: Vec<f64> = p.vel.x.0.iter().chain(p.vel.t.0.iter()).copied().collect();
         assert!(all.iter().all(|v| (0.0..2.0).contains(v)), "seed {seed}: {:?}", p.vel);
@@ -35,16 +35,16 @@ fn random_factors_differ_across_parts() {
 
 #[test]
 fn a_part_mover_moves_only_its_part_towards_the_projected_best() {
-    let mut mover = PsoRule::new(CFG, StdRng::seed_from_u64(3)).for_field::<X>();
+    let mover = PsoRule::new(CFG).for_field::<X>();
     let x0 = W { x: X([2.0; K]), t: T([5.0; K]) };
     let v0 = W { x: X([0.4; K]), t: T([0.7; K]) };
     let mut p = Particle::new(x0, v0);
     let common = BestSoFar { best_pos: x0, best_score: 0.0 };
 
-    fn run(m: &mut impl Rule<Pos = W, Shared = BestSoFar<W>, Outer = ()>, c: &BestSoFar<W>, p: &mut Particle<W>) {
-        m.apply(c, p.view());
+    fn run(m: &impl Rule<Pos = W, Shared = BestSoFar<W>, Outer = ()>, c: &BestSoFar<W>, p: &mut Particle<W>) {
+        m.apply(c, &mut StdRng::seed_from_u64(3), p.view());
     }
-    run(&mut mover, &common, &mut p);
+    run(&mover, &common, &mut p);
 
     assert_eq!(p.vel.x, X([0.4; K]) * 0.25);
     assert_eq!(p.pos.x, X([2.0; K]) + X([0.4; K]) * 0.25);

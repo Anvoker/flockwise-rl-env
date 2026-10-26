@@ -47,6 +47,12 @@ record compile_checks $?
 cargo +"$MIRI_TOOLCHAIN" miri test --offline --test miri >"$LOGS/miri.log" 2>&1
 record miri $?
 
+# Reported, not scored: how much faster 8 threads are than 1.
+cargo test --release --offline --test h_parallel -- --ignored --nocapture speedup_report \
+    >"$LOGS/speedup.log" 2>&1
+speedup=$(grep -o 'SPEEDUP_8_VS_1 [0-9.]*' "$LOGS/speedup.log" | cut -d' ' -f2)
+results="$results\"speedup_8_vs_1 (not scored)\": ${speedup:-null}, "
+
 echo "${results%, }}" >"$LOGS/results.json"
 echo "$passed passed, $failed failed"
 

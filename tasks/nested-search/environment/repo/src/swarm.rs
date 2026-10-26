@@ -65,18 +65,16 @@ where
     }
 }
 
-pub struct PsoRule<'a, R: Rng, G: Region> {
+pub struct PsoRule<'a, G: Region> {
     params: PsoParams,
-    rng: R,
     region: &'a G,
 }
 
-impl<'a, R: Rng, G: Region> PsoRule<'a, R, G> {
-    pub fn new(params: PsoParams, rng: R, region: &'a G) -> Self {
-        PsoRule::<R, G> {
+impl<'a, G: Region> PsoRule<'a, G> {
+    pub fn new(params: PsoParams, region: &'a G) -> Self {
+        PsoRule::<G> {
             params,
             region,
-            rng,
         }
     }
 }
@@ -98,7 +96,7 @@ impl<'a, Pos: Point, S: Search<Pos = Pos>> SoloRule
 {
     type Pos = Pos;
 
-    fn apply(&mut self, p: ParticleView<'_, Self::Pos>) {
+    fn apply(&self, p: ParticleView<'_, Self::Pos>) {
         let iter = (self.make_search)();
         match iter.last() {
             Some(x) => {
@@ -111,24 +109,24 @@ impl<'a, Pos: Point, S: Search<Pos = Pos>> SoloRule
     }
 }
 
-impl<'a, R: Rng, G: Region> OuterAware for PsoRule<'a, R, G> {
+impl<'a, G: Region> OuterAware for PsoRule<'a, G> {
     type Outer = ();
 
     fn see_outer(&mut self, _outer: Self::Outer) {}
 }
 
-impl<'a, T: Point, R: Rng, G: Region<Pos = T>> Rule
-    for PsoRule<'a, R, G>
+impl<'a, T: Point, G: Region<Pos = T>> Rule
+    for PsoRule<'a, G>
 {
     type Pos = T;
     type Shared = BestSoFar<T>;
 
-    fn apply(&mut self, shared: &Self::Shared, p: ParticleView<'_, Self::Pos>) {
+    fn apply<R: Rng + ?Sized>(&self, shared: &Self::Shared, rng: &mut R, p: ParticleView<'_, Self::Pos>) {
         let p_diff = (*p.best_pos - *p.pos) * self.params.cognitive;
         let g_diff = (shared.best_pos - *p.pos) * self.params.social;
         let a = *p.vel * self.params.inertia;
-        let b = p_diff * self.rng.sample::<f64, StandardUniform>(StandardUniform);
-        let c = g_diff * self.rng.sample::<f64, StandardUniform>(StandardUniform);
+        let b = p_diff * rng.sample::<f64, StandardUniform>(StandardUniform);
+        let c = g_diff * rng.sample::<f64, StandardUniform>(StandardUniform);
         let vel = a + b + c;
         let new_pos = *p.pos + vel;
 
@@ -149,10 +147,11 @@ where
     type Pos = Pos;
 
     fn next(&mut self, particles: &mut [Particle<Self::Pos>]) -> &BestSoFar<Pos> {
+        let mut rng = rand::rng();
         for p in particles.iter_mut() {
             p.score = self.objective.score(p.pos);
             update_best(self.best, p);
-            self.r1.apply(self.best, p.view());
+            self.r1.apply(self.best, &mut rng, p.view());
         }
 
         return self.best;
@@ -171,11 +170,12 @@ where
     type Pos = Pos;
 
     fn next(&mut self, particles: &mut [Particle<Self::Pos>]) -> &BestSoFar<Pos> {
+        let mut rng = rand::rng();
         for p in particles.iter_mut() {
             p.score = self.objective.score(p.pos);
             update_best(self.best, p);
-            self.r1.apply(self.best, <R1::Pos as SplitFrom>::split(p.view()));
-            self.r2.apply(self.best, <R2::Pos as SplitFrom>::split(p.view()));
+            self.r1.apply(self.best, &mut rng, <R1::Pos as SplitFrom>::split(p.view()));
+            self.r2.apply(self.best, &mut rng, <R2::Pos as SplitFrom>::split(p.view()));
         }
 
         return self.best;

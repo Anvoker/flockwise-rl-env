@@ -20,7 +20,7 @@ fn small_nested_search_runs() {
         let inner = Swarm1::new(
             InnerFit::new(problem),
             Confined::new(
-                PsoRule::new(CONFIG, StdRng::seed_from_u64(seed)),
+                PsoRule::new(CONFIG),
                 TBounds::new(problem),
             ),
         );
@@ -28,11 +28,11 @@ fn small_nested_search_runs() {
         Swarm2::new(
             OuterFit(problem),
             Confined::new(
-                PsoRule::new(CONFIG, StdRng::seed_from_u64(seed + 1)),
+                PsoRule::new(CONFIG),
                 XBounds(problem),
             )
             .for_field::<X>(),
-            InnerSearch::new(3, inner, TInit { problem, count: 3 }, StdRng::seed_from_u64(seed + 2)),
+            InnerSearch::new(3, inner, TInit { problem, count: 3 }),
         )
     };
 
@@ -44,8 +44,8 @@ fn small_nested_search_runs() {
     let mut group_a = initial_group(&problem, 3, &mut rng);
     let mut group_b = group_a.clone();
 
-    let best_a = Run::new(3, &mut a, &mut group_a).last().unwrap();
-    let best_b = Run::new(3, &mut b, &mut group_b).last().unwrap();
+    let best_a = Run::new(3, &mut a, &mut group_a, 7).last().unwrap();
+    let best_b = Run::new(3, &mut b, &mut group_b, 7).last().unwrap();
     assert!(best_a.best_score.is_finite());
     assert_eq!(best_a, best_b);
 }

@@ -41,8 +41,8 @@ where
     type Pos = G::Pos;
     type Shared = R::Shared;
 
-    fn apply(&mut self, shared: &Self::Shared, mut p: ParticleView<'_, Self::Pos>) {
-        self.rule.apply(shared, p.reborrow());
+    fn apply<T: Rng + ?Sized>(&self, shared: &Self::Shared, rng: &mut T, mut p: ParticleView<'_, Self::Pos>) {
+        self.rule.apply(shared, rng, p.reborrow());
         *p.pos = self.region.confine(*p.pos);
     }
 }
@@ -86,47 +86,45 @@ where
     type Pos = W;
     type Shared = BestSoFar<W>;
 
-    fn apply(&mut self, shared: &Self::Shared, p: ParticleView<'_, Self::Pos>) {
+    fn apply<T: Rng + ?Sized>(&self, shared: &Self::Shared, rng: &mut T, p: ParticleView<'_, Self::Pos>) {
         let field_best = BestSoFar {
             best_pos: <R::Pos as ReadFrom>::read(&shared.best_pos),
             best_score: shared.best_score,
         };
 
-        self.rule.apply(&field_best, <R::Pos as SplitFrom>::split(p));
+        self.rule.apply(&field_best, rng, <R::Pos as SplitFrom>::split(p));
     }
 }
 
 /// Runs a whole inner search for every particle it moves, and writes the
-/// inner result into that particle's field.
+/// inner result into that particle's field. Particles can be moved in
+/// parallel, so each one gets a fresh copy of the inner search.
 #[derive(Clone, Debug)]
-pub struct InnerSearch<S, D, R, Outer> {
+pub struct InnerSearch<S, D, Outer> {
     iterations: usize,
     search: S,
     seeder: D,
-    rng: R,
     phantom: PhantomData<fn() -> Outer>,
 }
 
-impl<S, D, R, Outer> InnerSearch<S, D, R, Outer>
+impl<S, D, Outer> InnerSearch<S, D, Outer>
 where
     D: Seeder,
     D::Inner: WriteInto<Whole = D::Outer>,
-    S: Search<Pos = D::Inner> + OuterAware<Outer = D::Outer>,
-    R: Rng,
-    Outer: Copy,
+    S: Search<Pos = D::Inner> + OuterAware<Outer = D::Outer> + Clone,
+    Outer: Copy + Send + Sync,
 {
-    pub fn new(iterations: usize, search: S, seeder: D, rng: R) -> Self {
+    pub fn new(iterations: usize, search: S, seeder: D) -> Self {
         InnerSearch {
             iterations,
             search,
             seeder,
-            rng,
             phantom: PhantomData,
         }
     }
 }
 
-impl<S, D, R, Outer: Copy> OuterAware for InnerSearch<S, D, R, Outer> {
+impl<S, D, Outer: Copy + Send + Sync> OuterAware for InnerSearch<S, D, Outer> {
     type Outer = Outer;
 
     // Its own outer position isn't needed: it shows the inner search the
@@ -134,22 +132,23 @@ impl<S, D, R, Outer: Copy> OuterAware for InnerSearch<S, D, R, Outer> {
     fn see_outer(&mut self, _outer: Self::Outer) {}
 }
 
-impl<S, D, R, Outer> Rule for InnerSearch<S, D, R, Outer>
+impl<S, D, Outer> Rule for InnerSearch<S, D, Outer>
 where
     D: Seeder,
     D::Inner: WriteInto<Whole = D::Outer>,
-    S: Search<Pos = D::Inner> + OuterAware<Outer = D::Outer>,
-    R: Rng,
-    Outer: Copy,
+    S: Search<Pos = D::Inner> + OuterAware<Outer = D::Outer> + Clone,
+    Outer: Copy + Send + Sync,
 {
     type Pos = D::Outer;
     type Shared = BestSoFar<D::Outer>;
 
-    fn apply(&mut self, _shared: &Self::Shared, p: ParticleView<'_, Self::Pos>) {
-        self.search.see_outer(*p.pos);
+    fn apply<T: Rng + ?Sized>(&self, _shared: &Self::Shared, rng: &mut T, p: ParticleView<'_, Self::Pos>) {
+        let mut search = self.search.clone();
+        search.see_outer(*p.pos);
 
-        let mut particles = self.seeder.seed(*p.pos, &mut self.rng);
-        let best = Run::new(self.iterations, &mut self.search, &mut particles).last();
+        let seed = rng.random::<u64>();
+        let mut particles = self.seeder.seed(*p.pos, rng);
+        let best = Run::new(self.iterations, &mut search, &mut particles, seed).last();
 
         if let Some(best) = best {
             best.best_pos.write(p.pos);

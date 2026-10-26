@@ -119,13 +119,13 @@ fn reordered_parts_in_five_dimensions() {
     for seed in seed_base()..seed_base() + 3 {
         let inner = Swarm1::new(
             InnerQ(prob, Pq::default()),
-            Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(seed * 7)), QBounds(prob, Pq::default())),
+            Confined::new(PsoRule::new(CONFIG), QBounds(prob, Pq::default())),
         );
 
         let mut outer = Swarm2::new(
             Outer(prob),
-            Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(seed * 7 + 2)), PBox).for_field::<P>(),
-            InnerSearch::new(40, inner, QInit(prob, 12), StdRng::seed_from_u64(seed * 7 + 1)),
+            Confined::new(PsoRule::new(CONFIG), PBox).for_field::<P>(),
+            InnerSearch::new(40, inner, QInit(prob, 12)),
         );
 
         let mut rng = StdRng::seed_from_u64(seed * 7 + 3);
@@ -137,7 +137,7 @@ fn reordered_parts_in_five_dimensions() {
             })
             .collect();
 
-        let best = Run::new(80, &mut outer, &mut group).last().unwrap().best_pos;
+        let best = Run::new(80, &mut outer, &mut group, seed).last().unwrap().best_pos;
         let dp = max_abs_diff(best.p.0, p_star);
         let dq = max_abs_diff(best.q.0, q_star);
         assert!(dp < 0.05 && dq < 0.05, "seed {seed}: {best:?}, dp {dp}, dq {dq}");
@@ -152,15 +152,15 @@ fn nested_mover_first_composes_and_delivers_context() {
     let inner = Swarm1::new(
         RecFit::new(InnerQ(prob, Pq::default()), log.clone()),
         Confined::new(
-            PsoRule::new(CONFIG, StdRng::seed_from_u64(1)),
+            PsoRule::new(CONFIG),
             RecBound::new(QBounds(prob, Pq::default()), log.clone()),
         ),
     );
 
     let mut outer = Swarm2::new(
         Outer(prob),
-        InnerSearch::new(4, inner, RecInit { inner: QInit(prob, 3), log: log.clone() }, StdRng::seed_from_u64(2)),
-        Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(3)), PBox).for_field::<P>(),
+        InnerSearch::new(4, inner, RecInit { inner: QInit(prob, 3), log: log.clone() }),
+        Confined::new(PsoRule::new(CONFIG), PBox).for_field::<P>(),
     );
 
     let mut rng = StdRng::seed_from_u64(4);
@@ -171,7 +171,7 @@ fn nested_mover_first_composes_and_delivers_context() {
         })
         .collect();
 
-    Run::new(3, &mut outer, &mut group).for_each(drop);
+    Run::new(3, &mut outer, &mut group, 0).for_each(drop);
     check_counts(&log.events(), 3 * 4, &["fit", "bound"]);
 }
 
@@ -182,12 +182,12 @@ fn nested_mover_first_still_converges_near_the_optimum() {
     for seed in seed_base()..seed_base() + 3 {
         let inner = Swarm1::new(
             InnerQ(prob, Pq::default()),
-            Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(seed * 7)), QBounds(prob, Pq::default())),
+            Confined::new(PsoRule::new(CONFIG), QBounds(prob, Pq::default())),
         );
         let mut outer = Swarm2::new(
             Outer(prob),
-            InnerSearch::new(40, inner, QInit(prob, 12), StdRng::seed_from_u64(seed * 7 + 1)),
-            Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(seed * 7 + 2)), PBox).for_field::<P>(),
+            InnerSearch::new(40, inner, QInit(prob, 12)),
+            Confined::new(PsoRule::new(CONFIG), PBox).for_field::<P>(),
         );
 
         let mut rng = StdRng::seed_from_u64(seed * 7 + 3);
@@ -200,7 +200,7 @@ fn nested_mover_first_still_converges_near_the_optimum() {
             .collect();
         let start_best = group.iter().map(|g| prob.fitness(g.pos.p.0, g.pos.q.0)).fold(f64::NEG_INFINITY, f64::max);
 
-        let best = Run::new(80, &mut outer, &mut group).last().unwrap();
+        let best = Run::new(80, &mut outer, &mut group, seed).last().unwrap();
         let dp = max_abs_diff(best.best_pos.p.0, prob.a);
         assert!(start_best < OPTIMUM - 5.0, "seed {seed}: the start should be far from the optimum");
         assert!(best.best_score > OPTIMUM - 1.0, "seed {seed}: fitness {} vs optimum {OPTIMUM}", best.best_score);

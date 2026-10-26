@@ -20,7 +20,7 @@ fn inner_searcher(
     Swarm1::new(
         InnerFit::new(problem),
         Confined::new(
-            PsoRule::new(CONFIG, StdRng::seed_from_u64(seed)),
+            PsoRule::new(CONFIG),
             TBounds::new(problem),
         ),
     )
@@ -30,21 +30,19 @@ fn solve(problem: Problem, seed: u64) -> W {
     let mut outer = Swarm2::new(
         OuterFit(problem),
         Confined::new(
-            PsoRule::new(CONFIG, StdRng::seed_from_u64(seed + 1)),
+            PsoRule::new(CONFIG),
             XBounds(problem),
         )
         .for_field::<X>(),
         InnerSearch::new(
             30,
             inner_searcher(problem, seed + 2),
-            TInit { problem, count: 10 },
-            StdRng::seed_from_u64(seed + 3),
-        ),
+            TInit { problem, count: 10 }),
     );
 
     let mut rng = StdRng::seed_from_u64(seed);
     let mut group = initial_group(&problem, 20, &mut rng);
-    let best = Run::new(60, &mut outer, &mut group).last().unwrap();
+    let best = Run::new(60, &mut outer, &mut group, seed).last().unwrap();
     best.best_pos
 }
 

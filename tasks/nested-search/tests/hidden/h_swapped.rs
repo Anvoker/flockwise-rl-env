@@ -104,7 +104,7 @@ fn solve(problem: Problem, seed: u64) -> W {
             outer: W::default(),
         },
         Confined::new(
-            PsoRule::new(CONFIG, StdRng::seed_from_u64(seed + 1)),
+            PsoRule::new(CONFIG),
             XBoundsFromT {
                 problem,
                 outer: W::default(),
@@ -114,9 +114,9 @@ fn solve(problem: Problem, seed: u64) -> W {
 
     let mut outer = Swarm2::new(
         OuterFit(problem),
-        Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(seed + 2)), TBox)
+        Confined::new(PsoRule::new(CONFIG), TBox)
             .for_field::<T>(),
-        InnerSearch::new(30, inner, XInit { problem, count: 10 }, StdRng::seed_from_u64(seed + 3)),
+        InnerSearch::new(30, inner, XInit { problem, count: 10 }),
     );
 
     let mut rng = StdRng::seed_from_u64(seed);
@@ -128,7 +128,7 @@ fn solve(problem: Problem, seed: u64) -> W {
         })
         .collect();
 
-    Run::new(60, &mut outer, &mut group).last().unwrap().best_pos
+    Run::new(60, &mut outer, &mut group, seed).last().unwrap().best_pos
 }
 
 #[test]

@@ -1,6 +1,8 @@
 use crate::api::{BestSoFar, Objective, OuterAware, Particle, ParticleView, Point, Rule};
 use crate::search::Search;
 use rand::Rng;
+use rand::rngs::StdRng;
+use rayon::prelude::*;
 use std::marker::PhantomData;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -96,11 +98,13 @@ where
         self.best = BestSoFar::new();
     }
 
-    fn step(&mut self, particles: &mut [Particle<Self::Pos>]) -> BestSoFar<Self::Pos> {
-        for p in particles.iter_mut() {
-            score(&self.objective, &mut self.best, p);
-            self.r1.apply(&self.best, p.view());
-        }
+    fn step(&mut self, particles: &mut [Particle<Self::Pos>], rngs: &mut [StdRng]) -> BestSoFar<Self::Pos> {
+        score_all(&self.objective, &mut self.best, particles);
+
+        let (best, r1) = (&self.best, &self.r1);
+        particles.par_iter_mut().zip(rngs.par_iter_mut()).for_each(|(p, rng)| {
+            r1.apply(best, rng, p.view());
+        });
 
         self.best
     }
@@ -118,71 +122,72 @@ where
         self.best = BestSoFar::new();
     }
 
-    fn step(&mut self, particles: &mut [Particle<Self::Pos>]) -> BestSoFar<Self::Pos> {
-        for p in particles.iter_mut() {
-            score(&self.objective, &mut self.best, p);
-            self.r1.apply(&self.best, p.view());
-            self.r2.apply(&self.best, p.view());
-        }
+    fn step(&mut self, particles: &mut [Particle<Self::Pos>], rngs: &mut [StdRng]) -> BestSoFar<Self::Pos> {
+        score_all(&self.objective, &mut self.best, particles);
+
+        let (best, r1, r2) = (&self.best, &self.r1, &self.r2);
+        particles.par_iter_mut().zip(rngs.par_iter_mut()).for_each(|(p, rng)| {
+            r1.apply(best, rng, p.view());
+            r2.apply(best, rng, p.view());
+        });
 
         self.best
     }
 }
 
-fn score<O: Objective>(objective: &O, best: &mut BestSoFar<O::Pos>, p: &mut Particle<O::Pos>) {
-    p.score = objective.score(p.pos);
+/// Scores every particle in parallel, then updates the bests in particle
+/// order, so an earlier particle wins a tie whatever the thread count.
+fn score_all<O: Objective>(objective: &O, best: &mut BestSoFar<O::Pos>, particles: &mut [Particle<O::Pos>]) {
+    particles.par_iter_mut().for_each(|p| p.score = objective.score(p.pos));
 
-    if p.score > p.best_score {
-        p.best_score = p.score;
-        p.best_pos = p.pos;
-    }
+    for p in particles.iter_mut() {
+        if p.score > p.best_score {
+            p.best_score = p.score;
+            p.best_pos = p.pos;
+        }
 
-    if p.score > best.best_score {
-        best.best_score = p.score;
-        best.best_pos = p.pos;
+        if p.score > best.best_score {
+            best.best_score = p.score;
+            best.best_pos = p.pos;
+        }
     }
 }
 
 /// The standard global-best PSO update. Ignores the outer position.
 #[derive(Clone, Debug)]
-pub struct PsoRule<P, R, Outer> {
+pub struct PsoRule<P, Outer> {
     params: PsoParams,
-    rng: R,
     phantom: PhantomData<fn() -> (P, Outer)>,
 }
 
-impl<P, R, Outer> PsoRule<P, R, Outer>
+impl<P, Outer> PsoRule<P, Outer>
 where
     P: Point,
-    R: Rng,
-    Outer: Copy,
+    Outer: Copy + Send + Sync,
 {
-    pub fn new(params: PsoParams, rng: R) -> Self {
+    pub fn new(params: PsoParams) -> Self {
         PsoRule {
             params,
-            rng,
             phantom: PhantomData,
         }
     }
 }
 
-impl<P, R, Outer: Copy> OuterAware for PsoRule<P, R, Outer> {
+impl<P, Outer: Copy + Send + Sync> OuterAware for PsoRule<P, Outer> {
     type Outer = Outer;
 
     fn see_outer(&mut self, _outer: Self::Outer) {}
 }
 
-impl<P, R, Outer> Rule for PsoRule<P, R, Outer>
+impl<P, Outer> Rule for PsoRule<P, Outer>
 where
     P: Point,
-    R: Rng,
-    Outer: Copy,
+    Outer: Copy + Send + Sync,
 {
     type Pos = P;
     type Shared = BestSoFar<P>;
 
-    fn apply(&mut self, shared: &Self::Shared, p: ParticleView<'_, Self::Pos>) {
-        let rng = &mut self.rng;
+    fn apply<R: Rng + ?Sized>(&self, shared: &Self::Shared, rng: &mut R, p: ParticleView<'_, Self::Pos>) {
         let (c1, c2) = (self.params.cognitive, self.params.social);
         let cognitive = (*p.best_pos - *p.pos).map_scalars(|d| d * c1 * rng.random::<f64>());
         let social = (shared.best_pos - *p.pos).map_scalars(|d| d * c2 * rng.random::<f64>());

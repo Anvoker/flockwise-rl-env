@@ -52,7 +52,7 @@ fn single_search_finds_the_center() {
     for seed in seed_base()..seed_base() + 5 {
         let mut searcher = Swarm1::new(
             Sphere { center },
-            Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(seed)), Box100),
+            Confined::new(PsoRule::new(CONFIG), Box100),
         );
 
         let mut rng = StdRng::seed_from_u64(seed + 100);
@@ -66,7 +66,7 @@ fn single_search_finds_the_center() {
             .collect();
 
         let initial: Vec<V> = group.iter().map(|p| p.pos).collect();
-        let mut iter = Run::new(100, &mut searcher, &mut group);
+        let mut iter = Run::new(100, &mut searcher, &mut group, seed);
         let first = iter.next().unwrap();
         let mut bests = vec![first];
         bests.extend(iter);
@@ -97,7 +97,7 @@ fn personal_bests_after_one_iteration_are_the_starting_positions() {
     let center = [1.0, -4.0, 2.5, 7.0];
     let mut searcher = Swarm1::new(
         Sphere { center },
-        Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(5)), Box100),
+        Confined::new(PsoRule::new(CONFIG), Box100),
     );
     let mut rng = StdRng::seed_from_u64(6);
     let mut group: Vec<Particle<V>> = (0..8)
@@ -105,7 +105,7 @@ fn personal_bests_after_one_iteration_are_the_starting_positions() {
         .collect();
     let initial: Vec<V> = group.iter().map(|p| p.pos).collect();
 
-    Run::new(1, &mut searcher, &mut group).for_each(drop);
+    Run::new(1, &mut searcher, &mut group, 0).for_each(drop);
 
     let sphere = Sphere { center };
     for (p, start) in group.iter().zip(&initial) {

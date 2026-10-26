@@ -1,16 +1,17 @@
 use crate::api::{OuterAware, BestSoFar, Rule, Particle, ParticleView, Point};
+use rand::Rng;
 
 pub trait SoloRule {
     type Pos: Point;
 
-    fn apply(&mut self, p: ParticleView<'_, Self::Pos>);
+    fn apply(&self, p: ParticleView<'_, Self::Pos>);
 }
 
-impl<T: SoloRule<Pos = Pos> + OuterAware, Pos: Point> Rule for T {
+impl<T: SoloRule<Pos = Pos> + OuterAware + Send + Sync, Pos: Point> Rule for T {
     type Pos = Pos;
     type Shared = ();
 
-    fn apply(&mut self, _shared: &Self::Shared, p: ParticleView<'_, Self::Pos>) {
+    fn apply<R: Rng + ?Sized>(&self, _shared: &Self::Shared, _rng: &mut R, p: ParticleView<'_, Self::Pos>) {
         SoloRule::apply(self, p);
     }
 }

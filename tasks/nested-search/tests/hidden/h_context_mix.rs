@@ -55,7 +55,7 @@ impl OuterAware for PullToX {
 impl Rule for PullToX {
     type Pos = T;
     type Shared = BestSoFar<T>;
-    fn apply(&mut self, _: &BestSoFar<T>, p: ParticleView<'_, T>) {
+    fn apply<R: rand::Rng + ?Sized>(&self, _: &BestSoFar<T>, _: &mut R, p: ParticleView<'_, T>) {
         *p.pos = *p.pos + (T(self.0.x.0) - *p.pos) * 0.01;
     }
 }
@@ -66,13 +66,13 @@ macro_rules! run {
         let inner = Swarm1::new($fit, Confined::new($mover, $bound));
         let mut outer = Swarm2::new(
             OuterFit(problem),
-            Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(1)), XBounds(problem))
+            Confined::new(PsoRule::new(CONFIG), XBounds(problem))
                 .for_field::<X>(),
-            InnerSearch::new(3, inner, RecInit { inner: TInit { problem, count: 2 }, log: $log.clone() }, StdRng::seed_from_u64(2)),
+            InnerSearch::new(3, inner, RecInit { inner: TInit { problem, count: 2 }, log: $log.clone() }),
         );
         let mut rng = StdRng::seed_from_u64(3);
         let mut group = initial_group(&problem, 3, &mut rng);
-        Run::new(2, &mut outer, &mut group).for_each(drop);
+        Run::new(2, &mut outer, &mut group, 0).for_each(drop);
     }};
 }
 
@@ -81,7 +81,7 @@ const PER_SEARCH: usize = 2 * 3;
 #[test]
 fn every_combination_of_context_use() {
     let p = Problem::standard();
-    let pso = || PsoRule::new(CONFIG, StdRng::seed_from_u64(9));
+    let pso = || PsoRule::new(CONFIG);
 
     // fit, boundary, mover: C = uses context, N = ignores it.
     let l = Log::<W>::new();

@@ -18,7 +18,7 @@ fn build(problem: Problem, seed: u64) -> impl Search<Pos = W> + OuterAware<Outer
     let inner = Swarm1::new(
         InnerFit::new(problem),
         Confined::new(
-            PsoRule::new(CONFIG, StdRng::seed_from_u64(seed)),
+            PsoRule::new(CONFIG),
             TBounds::new(problem),
         ),
     );
@@ -26,11 +26,11 @@ fn build(problem: Problem, seed: u64) -> impl Search<Pos = W> + OuterAware<Outer
     Swarm2::new(
         OuterFit(problem),
         Confined::new(
-            PsoRule::new(CONFIG, StdRng::seed_from_u64(seed + 1)),
+            PsoRule::new(CONFIG),
             XBounds(problem),
         )
         .for_field::<X>(),
-        InnerSearch::new(20, inner, TInit { problem, count: 8 }, StdRng::seed_from_u64(seed + 2)),
+        InnerSearch::new(20, inner, TInit { problem, count: 8 }),
     )
 }
 
@@ -53,7 +53,7 @@ fn a_stored_searcher_runs_on_another_thread() {
 
     let handle = std::thread::spawn(move || {
         let mut job = job;
-        Run::new(50, &mut job.searcher, &mut job.group).last().unwrap()
+        Run::new(50, &mut job.searcher, &mut job.group, 0).last().unwrap()
     });
     let best = handle.join().unwrap();
 
@@ -88,8 +88,8 @@ fn clones_are_independent_even_when_interleaved() {
 
     let fitness = |w: &W| problem.fitness(w.x.0, w.t.0);
     {
-        let mut it_a = Run::new(4, &mut a, &mut group_a);
-        let mut it_b = Run::new(4, &mut b, &mut group_b);
+        let mut it_a = Run::new(4, &mut a, &mut group_a, 0);
+        let mut it_b = Run::new(4, &mut b, &mut group_b, 0);
         let mut best_b = Vec::new();
         for _ in 0..4 {
             it_a.next().unwrap();
@@ -114,8 +114,8 @@ fn a_clone_reproduces_the_original() {
     let mut group_a = initial_group(&problem, 8, &mut rng);
     let mut group_b = group_a.clone();
 
-    let best_a = Run::new(5, &mut a, &mut group_a).last().unwrap();
-    let best_b = Run::new(5, &mut b, &mut group_b).last().unwrap();
+    let best_a = Run::new(5, &mut a, &mut group_a, 0).last().unwrap();
+    let best_b = Run::new(5, &mut b, &mut group_b, 0).last().unwrap();
     assert_eq!(best_a, best_b);
     assert_eq!(group_a, group_b);
 }

@@ -188,7 +188,7 @@ fn level3(chain: Chain, seed: u64, log: &Log<YT>) -> impl Search<Pos = T> + Oute
     Swarm1::new(
         RecFit::new(Fit3(chain, YT::default()), log.clone()),
         Confined::new(
-            PsoRule::new(CONFIG, StdRng::seed_from_u64(seed)),
+            PsoRule::new(CONFIG),
             RecBound::new(TBounds(chain, YT::default()), log.clone()),
         ),
     )
@@ -204,16 +204,14 @@ fn level2(
     Swarm2::new(
         RecFit::new(Fit2(chain, W::default()), logs.level2.clone()),
         Confined::new(
-            PsoRule::new(CONFIG, StdRng::seed_from_u64(seed)),
+            PsoRule::new(CONFIG),
             RecBound::new(YBounds(chain, W::default()), logs.level2.clone()),
         )
         .for_field::<Y>(),
         InnerSearch::new(
             n3,
             level3(chain, seed + 1, &logs.level3),
-            RecInit { inner: Init3(chain, p3), log: logs.level3.clone() },
-            StdRng::seed_from_u64(seed + 2),
-        ),
+            RecInit { inner: Init3(chain, p3), log: logs.level3.clone() }),
     )
 }
 
@@ -223,13 +221,11 @@ fn solve(chain: Chain, seed: u64, logs: &Logs, sizes: (usize, usize, usize, usiz
 
     let mut searcher = Swarm2::new(
         Fit1(chain),
-        Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(seed)), XBox).for_field::<X>(),
+        Confined::new(PsoRule::new(CONFIG), XBox).for_field::<X>(),
         InnerSearch::new(
             n2,
             level2(chain, seed + 10, logs, sizes),
-            RecInit { inner: Init2(chain, p2), log: logs.level2.clone() },
-            StdRng::seed_from_u64(seed + 20),
-        ),
+            RecInit { inner: Init2(chain, p2), log: logs.level2.clone() }),
     );
 
     let mut rng = StdRng::seed_from_u64(seed + 30);
@@ -242,7 +238,7 @@ fn solve(chain: Chain, seed: u64, logs: &Logs, sizes: (usize, usize, usize, usiz
         })
         .collect();
 
-    Run::new(n1, &mut searcher, &mut group).last().unwrap().best_pos
+    Run::new(n1, &mut searcher, &mut group, seed).last().unwrap().best_pos
 }
 
 fn chain() -> Chain {

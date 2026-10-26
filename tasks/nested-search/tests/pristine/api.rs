@@ -28,20 +28,21 @@ pub trait Point:
 /// Every objective, region and rule is `OuterAware`. Components that don't
 /// need the outer position declare some `Outer` type and ignore it.
 pub trait OuterAware {
-    type Outer: Copy;
+    type Outer: Copy + Send + Sync;
 
     fn see_outer(&mut self, outer: Self::Outer);
 }
 
-/// What a search maximizes.
-pub trait Objective: OuterAware {
+/// What a search maximizes. Particles may be scored from several threads at once.
+pub trait Objective: OuterAware + Send + Sync {
     type Pos: Point;
 
     fn score(&self, pos: Self::Pos) -> f64;
 }
 
-/// Maps a position back into the feasible region.
-pub trait Region: OuterAware {
+/// Maps a position back into the feasible region. May be used from several
+/// threads at once.
+pub trait Region: OuterAware + Send + Sync {
     type Pos: Point;
 
     fn confine(&self, pos: Self::Pos) -> Self::Pos;
@@ -145,15 +146,18 @@ impl<P: Default> Default for BestSoFar<P> {
 
 /// Moves one particle. `Shared` is what the search shares with every
 /// particle, e.g. the best position so far.
-pub trait Rule: OuterAware {
+///
+/// Particles may be moved from several threads at once, so a rule takes any
+/// randomness it needs from `rng`, which belongs to the particle being moved.
+pub trait Rule: OuterAware + Send + Sync {
     type Pos: Point;
     type Shared;
 
-    fn apply(&mut self, shared: &Self::Shared, p: ParticleView<'_, Self::Pos>);
+    fn apply<R: Rng + ?Sized>(&self, shared: &Self::Shared, rng: &mut R, p: ParticleView<'_, Self::Pos>);
 }
 
 /// Creates the particles of an inner search from the outer position it runs for.
-pub trait Seeder {
+pub trait Seeder: Send + Sync {
     type Outer: Point;
     type Inner: Point;
 

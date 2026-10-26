@@ -27,7 +27,7 @@ fn every_inner_component_sees_its_outer_particle() {
     let inner = Swarm1::new(
         RecFit::new(InnerFit::new(problem), log.clone()),
         Confined::new(
-            RecMover::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(1)), log.clone()),
+            RecMover::new(PsoRule::new(CONFIG), log.clone()),
             RecBound::new(TBounds::new(problem), log.clone()),
         ),
     );
@@ -35,7 +35,7 @@ fn every_inner_component_sees_its_outer_particle() {
     let outer_fit_log = Log::<()>::new();
     let mut outer = Swarm2::new(
         RecFit::new(OuterFit(problem), outer_fit_log.clone()),
-        Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(2)), XBounds(problem))
+        Confined::new(PsoRule::new(CONFIG), XBounds(problem))
             .for_field::<X>(),
         InnerSearch::new(
             INNER_ITERATIONS,
@@ -43,14 +43,12 @@ fn every_inner_component_sees_its_outer_particle() {
             RecInit {
                 inner: TInit { problem, count: INNER_PARTICLES },
                 log: log.clone(),
-            },
-            StdRng::seed_from_u64(3),
-        ),
+            }),
     );
 
     let mut rng = StdRng::seed_from_u64(4);
     let mut group = initial_group(&problem, OUTER_PARTICLES, &mut rng);
-    let n = Run::new(OUTER_ITERATIONS, &mut outer, &mut group).count();
+    let n = Run::new(OUTER_ITERATIONS, &mut outer, &mut group, 0).count();
     assert_eq!(n, OUTER_ITERATIONS, "a search yields once per iteration");
 
     let events = log.events();
@@ -74,7 +72,7 @@ fn context_reaches_components_wrapped_at_depth() {
         InnerFit::new(problem),
         RecMover::new(
             Confined::new(
-                RecMover::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(5)), log.clone()),
+                RecMover::new(PsoRule::new(CONFIG), log.clone()),
                 RecBound::new(TBounds::new(problem), log.clone()),
             ),
             wrapper_log.clone(),
@@ -83,19 +81,17 @@ fn context_reaches_components_wrapped_at_depth() {
 
     let mut outer = Swarm2::new(
         OuterFit(problem),
-        Confined::new(PsoRule::new(CONFIG, StdRng::seed_from_u64(6)), XBounds(problem))
+        Confined::new(PsoRule::new(CONFIG), XBounds(problem))
             .for_field::<X>(),
         InnerSearch::new(
             INNER_ITERATIONS,
             inner,
-            RecInit { inner: TInit { problem, count: INNER_PARTICLES }, log: init_log.clone() },
-            StdRng::seed_from_u64(7),
-        ),
+            RecInit { inner: TInit { problem, count: INNER_PARTICLES }, log: init_log.clone() }),
     );
 
     let mut rng = StdRng::seed_from_u64(8);
     let mut group = initial_group(&problem, OUTER_PARTICLES, &mut rng);
-    Run::new(2, &mut outer, &mut group).for_each(drop);
+    Run::new(2, &mut outer, &mut group, 0).for_each(drop);
 
     let per_search = INNER_PARTICLES * INNER_ITERATIONS;
     let inits = init_log.events();
