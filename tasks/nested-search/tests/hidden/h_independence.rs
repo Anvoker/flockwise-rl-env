@@ -14,7 +14,11 @@ use std::sync::{Arc, Mutex};
 fn inner_search_for_b_does_not_reuse_the_result_for_a() {
     // A sits at the optimum, so its inner search reaches a score near 0.
     // B is far away: everything reachable for B scores below -40. A stale or
-    // shared best so far would hand B the timings found for A.
+    // shared best so far would hand B the timings found for A, 4 away in
+    // every coordinate. The tolerance is loose because PSO occasionally
+    // stagnates on a face of the region, 0.5 from the optimum (3 times in
+    // 2,000 runs of this test, across the reference and another design);
+    // otherwise the error is below 1e-7.
     let problem = Problem::standard();
     let (x_star, _) = problem.optimum();
     let x_b: [f64; K] = add(x_star, 4.0).map(|v| v.min(problem.x_hi[0]));
@@ -39,7 +43,7 @@ fn inner_search_for_b_does_not_reuse_the_result_for_a() {
             for p in &group {
                 let x = p.pos.x.0;
                 let want: [f64; K] = std::array::from_fn(|i| x[i] + problem.c[i].clamp(-problem.w, problem.w));
-                assert!(max_abs_diff(p.pos.t.0, want) < 0.05, "seed {seed}: x {x:?} got t {:?}, want {want:?}", p.pos.t);
+                assert!(max_abs_diff(p.pos.t.0, want) < 1.0, "seed {seed}: x {x:?} got t {:?}, want {want:?}", p.pos.t);
             }
             assert_eq!(group[0].pos.x.0, order[0], "the inner search only writes its own field");
             assert_eq!(group[1].pos.x.0, order[1], "the inner search only writes its own field");

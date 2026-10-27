@@ -4,6 +4,9 @@
 # every test binary over many disjoint seed ranges.
 #
 # Usage: tools/calibrate.sh <task dir> <runs> [parallel jobs] [work dir] [src dir]
+# Set CALIBRATE_ONLY to a space-separated list of test files (such as
+# "h_routes h_borrowed") to calibrate only those. Tests are deterministic per
+# seed, so after changing some tests the others needn't run again.
 set -euo pipefail
 task=$(cd "$1" && pwd)
 runs=$2
@@ -32,6 +35,7 @@ out="$work/calibration"
 rm -rf "$out" && mkdir -p "$out"
 for bin in $bins; do
     name=$(basename "$bin" | sed 's/-[0-9a-f]*\(\.exe\)\{0,1\}$//')
+    case " ${CALIBRATE_ONLY:-$name} " in *" $name "*) ;; *) continue ;; esac
     seq 1 "$runs" | xargs -P "$jobs" -I{} sh -c \
         "FLOCKWISE_SEED_BASE=\$(( {} * 10 )) '$bin' --test-threads=1 2>&1 | grep -E '^test .* FAILED$' || true" \
         >"$out/$name.txt"

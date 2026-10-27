@@ -32,6 +32,12 @@ impl Data {
     }
 }
 
+/// The inner searches' size. With 6 iterations of 4 particles the convergence
+/// test failed 4 times in 1,000 runs; at this size the worst error in 1,000
+/// runs is 0.0067, against a threshold of 0.05.
+const INNER_ITERATIONS: usize = 20;
+const INNER_PARTICLES: usize = 8;
+
 fn borrowed_inner(data: &Data) -> impl Search<Pos = T, Outer = W> + Clone + Send {
     Swarm1::new(
         objective(move |w| inner_fit(data.problem(), w)),
@@ -54,9 +60,9 @@ fn borrowed_outer(data: &Data) -> impl Search<Pos = W, Outer = ()> + Clone + Sen
         )
         .for_field::<X>(),
         InnerSearch::new(
-            6,
+            INNER_ITERATIONS,
             borrowed_inner(data),
-            seeder(move |w: W, rng: &mut dyn RngCore| t_init(data.problem(), 4)(w, rng)),
+            seeder(move |w: W, rng: &mut dyn RngCore| t_init(data.problem(), INNER_PARTICLES)(w, rng)),
         ),
     )
 }
@@ -74,7 +80,7 @@ fn owned_outer(problem: Problem) -> impl Search<Pos = W, Outer = ()> + Clone + S
             region(move |_| x_bounds(problem)),
         )
         .for_field::<X>(),
-        InnerSearch::new(6, inner, seeder(t_init(problem, 4))),
+        InnerSearch::new(INNER_ITERATIONS, inner, seeder(t_init(problem, INNER_PARTICLES))),
     )
 }
 
@@ -130,7 +136,7 @@ fn a_borrowed_composition_is_stored_and_converges() {
     let mut planner = Planner { data: &data, search: borrowed_outer(&data) };
     let mut rng = StdRng::seed_from_u64(1 + seed_base());
     let mut group = initial_group(&planner.data.problem(), 20, &mut rng);
-    let best = Run::new(60, &mut planner.search, &mut group, 1).last().unwrap();
+    let best = Run::new(60, &mut planner.search, &mut group, 1 + seed_base()).last().unwrap();
     let (x_star, t_star) = planner.data.problem().optimum();
     assert!(max_abs_diff(best.best_pos.x.0, x_star) < 0.05, "{best:?}");
     assert!(max_abs_diff(best.best_pos.t.0, t_star) < 0.05, "{best:?}");

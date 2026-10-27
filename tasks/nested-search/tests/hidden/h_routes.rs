@@ -19,8 +19,10 @@ fn zones(z: [([f64; 2], f64); 3]) -> [Zone; 3] {
     z.map(|(center, radius)| Zone { center, radius })
 }
 
-/// A zone sits on the straight line. Thresholds are set from 300 runs of the
-/// reference (worst best-of-3: -25.4).
+/// A zone sits on the straight line. The worst best-of-3 in 1,000 runs: -25.6
+/// for the reference, -25.4 for another design. A planner that skips the
+/// timing search scores -30.7 at the median and fails here about 1 time in 10;
+/// the visible route test catches it every time.
 fn around_the_zones() -> Scenario {
     Scenario {
         start: [0.0, 0.0],
@@ -34,9 +36,13 @@ fn around_the_zones() -> Scenario {
     }
 }
 
-/// Light weight on energy, strong slow wind. Reference worst best-of-3: -9.85;
-/// the same waypoints flown as fast as possible: -11.96 at best. The threshold
-/// was moved from -10.5 to -11.0 after 1 false failure in 1,000 runs.
+/// Light weight on energy, strong slow wind. The worst best-of-3 in 1,000 runs:
+/// -10.79 for both designs (the same rare start, a local optimum), and -9.85
+/// otherwise. The same waypoints flown as fast as possible score -11.96 at
+/// best. The threshold was moved from -10.5 to -11.0 after 1 false failure in
+/// 1,000 runs. It catches planners that fly as fast as possible, not ones
+/// that skip the timing search: the outer search then picks waypoints whose
+/// random timings happen to be good (-10.09 at the median).
 fn timing_matters() -> Scenario {
     Scenario {
         start: [0.0, 5.0],
@@ -50,12 +56,18 @@ fn timing_matters() -> Scenario {
     }
 }
 
+/// Slack allowed by the feasibility check. Planners search on a penalized
+/// score, so a route can end up just inside a zone when the search finds
+/// nothing better: in 6,000 plans by two designs, one cut 0.0026 deep, and
+/// none other more than 0.001.
+const SLACK: f64 = 0.01;
+
 fn best_of_three(s: &Scenario) -> f64 {
     let base = 1000 * seed_base();
     let mut best = f64::NEG_INFINITY;
     for seed in base..base + 3 {
         let route = plan(s, &BUDGET, seed);
-        if let Err(why) = s.check(&route, 1e-3) {
+        if let Err(why) = s.check(&route, SLACK) {
             panic!("seed {seed}: infeasible route: {why}\n{route:?}");
         }
         best = best.max(s.score(&route));

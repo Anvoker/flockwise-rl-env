@@ -9,6 +9,8 @@
 #      alternative design in tools/alternatives/<task>/ over a third as many.
 #
 # Usage: tools/selftest.sh <task dir> <work dir> [calibration runs] [jobs]
+# On Windows, keep <work dir> short: build-script paths under it must stay
+# within 259 characters, or the linker fails and a variant looks rejected.
 #
 # Deletes only inside <work dir>: the tools it calls recreate their
 # subdirectories there.
