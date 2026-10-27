@@ -22,7 +22,7 @@ fn drawer<P>(k: usize) -> impl Fn(&BestSoFar<P>, &mut dyn RngCore, ParticleView<
 
 type Outcome = (Vec<BestSoFar<W>>, Vec<Particle<W>>);
 
-fn run_outer<S: Search<Pos = W, Outer = ()>>(mut search: S, seed: u64) -> Outcome {
+fn run_outer<S: Search<Pos = W, Outer = ()> + Clone + Send>(mut search: S, seed: u64) -> Outcome {
     let problem = Problem::standard();
     let mut rng = StdRng::seed_from_u64(seed);
     let mut group = initial_group(&problem, 8, &mut rng);

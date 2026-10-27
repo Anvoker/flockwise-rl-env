@@ -33,14 +33,25 @@ fn seen_by<P>(seen: Seen, f: impl Fn(P) -> f64 + Clone + Send + Sync) -> impl Fn
     }
 }
 
-fn nested(outer_seen: Seen, inner_seen: Seen, inner_iterations: usize) -> impl Search<Pos = W, Outer = ()> {
+/// Makes each call take a moment. Scoring one outer position is otherwise so
+/// fast that, with few CPUs, the thread that starts the parallel work may
+/// finish it before any other thread steals a part, so recording more than
+/// one thread wouldn't be guaranteed.
+fn pausing<P>(f: impl Fn(P) -> f64 + Clone + Send + Sync) -> impl Fn(P) -> f64 + Clone + Send + Sync {
+    move |pos: P| {
+        std::thread::sleep(std::time::Duration::from_micros(100));
+        f(pos)
+    }
+}
+
+fn nested(outer_seen: Seen, inner_seen: Seen, inner_iterations: usize) -> impl Search<Pos = W, Outer = ()> + Clone + Send {
     let problem = Problem::standard();
     let inner = Swarm1::new(
         objective(move |w| seen_by(inner_seen.clone(), inner_fit(problem, w))),
         Confined::new(PsoRule::new(CONFIG), region(move |w| t_bounds(problem, w))),
     );
     Swarm2::new(
-        objective(move |_| seen_by(outer_seen.clone(), outer_fit(problem))),
+        objective(move |_| seen_by(outer_seen.clone(), pausing(outer_fit(problem)))),
         Confined::new(PsoRule::new(CONFIG), region(move |_| x_bounds(problem))).for_field::<X>(),
         InnerSearch::new(inner_iterations, inner, seeder(t_init(problem, 8))),
     )

@@ -12,6 +12,7 @@ Deletes only inside <work dir>.
 """
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -23,7 +24,7 @@ ARC_BEST = [
     ("swarm.rs", "    best: BestSoFar<O::Pos>," + NL, "    best: std::sync::Arc<std::sync::Mutex<BestSoFar<O::Pos>>>," + NL, 0),
     ("swarm.rs", "best: BestSoFar::new(),", "best: Default::default(),", 0),
     ("swarm.rs", "self.best = BestSoFar::new();", "*self.best.lock().unwrap() = BestSoFar::new();", 0),
-    ("swarm.rs", "score_all(&self.objective, &mut self.best, particles);", "score_all(&self.objective, &mut self.best.lock().unwrap(), particles);", 0),
+    ("swarm.rs", "score_all(&self.objective, &mut self.best, particles);", "let mut best_value = *self.best.lock().unwrap();" + NL + "        score_all(&self.objective, &mut best_value, particles);" + NL + "        *self.best.lock().unwrap() = best_value;", 0),
     ("swarm.rs", "let (best, r1) = (&self.best, &self.r1);", "let best_value = *self.best.lock().unwrap();" + NL + "        let (best, r1) = (&best_value, &self.r1);", 1),
     ("swarm.rs", "let (best, r1, r2) = (&self.best, &self.r1, &self.r2);", "let best_value = *self.best.lock().unwrap();" + NL + "        let (best, r1, r2) = (&best_value, &self.r1, &self.r2);", 1),
     ("swarm.rs", "        self.best" + NL + "    }", "        *self.best.lock().unwrap()" + NL + "    }", 0),
@@ -32,7 +33,7 @@ ARC_BEST = [
 # name: (what the bug is, [(file, old, new, count)]); count 0 means all.
 MUTANTS = {
     "no_best_reset": (
-        "Searches never reset their best so far: the real bug from 2026-02-06 to 2026-04-22",
+        "A search doesn't reset its best so far when it runs again, so a rerun or reused search starts from an old best",
         [("swarm.rs", "fn begin(&mut self) {" + NL + "        self.best = BestSoFar::new();" + NL + "    }", "fn begin(&mut self) {}", 0)],
     ),
     "inner_prepared_for_default": (
@@ -60,11 +61,11 @@ MUTANTS = {
         [("components.rs", "        self.ready = Some((self.make)(outer));", "        if self.ready.is_none() {" + NL + "            self.ready = Some((self.make)(outer));" + NL + "        }", 1)],
     ),
     "region_sees_nothing": (
-        "Confined rules don't prepare their region",
+        "Confined rules don't prepare their region. The reference then panics on first use; wrong preparations that don't panic are covered by inner_prepared_for_default and inner_prepared_for_swarm_best",
         [("rules.rs", "        self.region.see_outer(outer);" + NL, "", 1)],
     ),
     "rules_see_nothing": (
-        "Swarms prepare their objective only, not their rules",
+        "Swarms prepare their objective only, not their rules. The reference then panics on first use, as above",
         [
             ("swarm.rs", "        self.r1.see_outer(outer);" + NL, "", 0),
             ("swarm.rs", "        self.r2.see_outer(outer);" + NL, "", 0),
@@ -125,18 +126,18 @@ MUTANTS = {
         ARC_BEST,
     ),
     "one_rng_for_all_particles": (
-        "All particles draw from one RNG behind a lock, so results depend on thread scheduling",
+        "All particles draw their seeds from one RNG behind a lock, so results depend on thread scheduling",
         [
             (
                 "swarm.rs",
                 "        particles.par_iter_mut().enumerate().for_each(|(i, p)| {" + NL + "            r1.apply(best, &mut stream(seed, iteration, i, 0), p.view());" + NL + "        });",
-                "        let shared = std::sync::Mutex::new(stream(seed, iteration, 0, 0));" + NL + "        particles.par_iter_mut().for_each(|p| {" + NL + "            let mut rng = shared.lock().unwrap();" + NL + "            r1.apply(best, &mut *rng, p.view());" + NL + "        });",
+                "        let shared = std::sync::Mutex::new(stream(seed, iteration, 0, 0));" + NL + "        particles.par_iter_mut().for_each(|p| {" + NL + "            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(rand::RngCore::next_u64(&mut *shared.lock().unwrap()));" + NL + "            r1.apply(best, &mut rng, p.view());" + NL + "        });",
                 1,
             ),
             (
                 "swarm.rs",
                 "        particles.par_iter_mut().enumerate().for_each(|(i, p)| {" + NL + "            r1.apply(best, &mut stream(seed, iteration, i, 0), p.view());" + NL + "            r2.apply(best, &mut stream(seed, iteration, i, 1), p.view());" + NL + "        });",
-                "        let shared = std::sync::Mutex::new(stream(seed, iteration, 0, 0));" + NL + "        particles.par_iter_mut().for_each(|p| {" + NL + "            let mut rng = shared.lock().unwrap();" + NL + "            r1.apply(best, &mut *rng, p.view());" + NL + "            r2.apply(best, &mut *rng, p.view());" + NL + "        });",
+                "        let shared = std::sync::Mutex::new(stream(seed, iteration, 0, 0));" + NL + "        particles.par_iter_mut().for_each(|p| {" + NL + "            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(rand::RngCore::next_u64(&mut *shared.lock().unwrap()));" + NL + "            r1.apply(best, &mut rng, p.view());" + NL + "            r2.apply(best, &mut rng, p.view());" + NL + "        });",
                 1,
             ),
         ],
@@ -172,6 +173,32 @@ MUTANTS = {
     "later_particle_wins_ties": (
         "When two particles score the same, the later one becomes the best so far",
         [("swarm.rs", "        if p.score > best.best_score {", "        if p.score >= best.best_score {", 1)],
+    ),
+    "inner_search_reused": (
+        "Inner searches are kept and reused for later particles without resetting their best so far: the form of the real bug from 2026-02-06 to 2026-04-22",
+        [
+            ("rules.rs", "    seeder: D," + NL + "    phantom: PhantomData<fn() -> Outer>," + NL + "}",
+             "    seeder: D," + NL + "    cache: std::sync::Arc<std::sync::Mutex<Vec<S>>>," + NL + "    phantom: PhantomData<fn() -> Outer>," + NL + "}", 1),
+            ("rules.rs", "            seeder," + NL + "            phantom: PhantomData,",
+             "            seeder," + NL + "            cache: Default::default()," + NL + "            phantom: PhantomData,", 1),
+            ("rules.rs", "        let mut search = self.search.clone();" + NL + "        search.begin();" + NL,
+             "        let cached = self.cache.lock().unwrap().pop();" + NL + "        let mut search = cached.unwrap_or_else(|| self.search.clone());" + NL, 1),
+            ("rules.rs", "            best.best_pos.write(p.pos);" + NL + "        }" + NL,
+             "            best.best_pos.write(p.pos);" + NL + "        }" + NL + "        self.cache.lock().unwrap().push(search);" + NL, 1),
+        ],
+    ),
+    "cognitive_uses_swarm_best": (
+        "PSO's cognitive pull goes towards the swarm's best instead of the particle's own",
+        [("swarm.rs", "let cognitive = (*p.best_pos - *p.pos)", "let cognitive = (best.best_pos - *p.pos)", 1)],
+    ),
+    "region_before_rule": (
+        "Confined applies the region before the rule instead of after it",
+        [(
+            "rules.rs",
+            "        self.rule.apply(best, rng, p.reborrow());" + NL + "        *p.pos = self.region.confine(*p.pos);",
+            "        *p.pos = self.region.confine(*p.pos);" + NL + "        self.rule.apply(best, rng, p.reborrow());",
+            1,
+        )],
     ),
 }
 
@@ -294,6 +321,14 @@ ALTERNATIVE_TREES = {
         "Components generic over the outer position (Rule<O>), prepared into separate values per search, hashed per-particle RNG streams, a parallel reduction for the best",
         "tools/alternatives/nested-search/prepared/src",
     ),
+    "haiku-v5": (
+        "Written by Claude Haiku 5.5 in the v5 trial: associated outer types, constructors without bounds, so types settle where a composition is used",
+        "tools/alternatives/nested-search/haiku-v5/src",
+    ),
+    "sonnet-v5": (
+        "Written by Claude Sonnet 5.5 in the v5 trial: its own traits, constructors without bounds",
+        "tools/alternatives/nested-search/sonnet-v5/src",
+    ),
 }
 
 
@@ -324,7 +359,22 @@ def verify_variant(task: Path, work: Path, bash: str, verify: Path, name: str, e
     failed = [line.split()[1] for line in run.stdout.splitlines() if line.startswith("FAIL")]
     if not failed and "failed: 0" not in run.stdout:
         raise SystemExit(f"{name}: the verifier didn't run:\n{run.stdout}\n{run.stderr}")
-    return failed
+    return failed, build_failure(work / "runs" / name)
+
+
+# A library or build script that doesn't compile fails every check, which
+# would look like a caught mutant or a rejected alternative. (A test that
+# doesn't compile can be a legitimate catch: some requirements are about
+# types.)
+BROKEN_BUILD = re.compile(r"could not compile `[^`]+` \((?:lib|build script)\)")
+
+
+def build_failure(runs: Path) -> str | None:
+    for log in sorted(runs.glob("*.log")):
+        found = BROKEN_BUILD.search(log.read_text(encoding="utf-8", errors="replace"))
+        if found:
+            return f"{found.group(0)} (in {log.name})"
+    return None
 
 
 def main() -> None:
@@ -341,8 +391,11 @@ def main() -> None:
         variants = [(name, why, edits, None) for name, (why, edits) in ALTERNATIVES.items()]
         variants += [(name, why, [], root / tree) for name, (why, tree) in ALTERNATIVE_TREES.items()]
         for name, why, edits, tree in variants:
-            failed = verify_variant(task, work, bash, verify, name, edits, tree)
-            if failed:
+            failed, broken = verify_variant(task, work, bash, verify, name, edits, tree)
+            if broken:
+                print(f"REJECTED {name}: didn't build: {broken}")
+                rejected.append(name)
+            elif failed:
                 print(f"REJECTED {name}: {why}: {', '.join(failed)}")
                 rejected.append(name)
             else:
@@ -355,8 +408,11 @@ def main() -> None:
     escaped = []
     for name in names:
         why, edits = MUTANTS[name]
-        failed = verify_variant(task, work, bash, verify, name, edits)
-        if failed:
+        failed, broken = verify_variant(task, work, bash, verify, name, edits)
+        if broken:
+            print(f"BROKEN   {name}: didn't build, so it proves nothing: {broken}")
+            escaped.append(name)
+        elif failed:
             print(f"caught   {name}: {', '.join(failed)}")
         else:
             print(f"ESCAPED  {name}: {why}")

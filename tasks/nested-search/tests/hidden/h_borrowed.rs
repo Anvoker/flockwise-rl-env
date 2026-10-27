@@ -95,7 +95,7 @@ fn pso_x(best: &BestSoFar<X>, rng: &mut dyn RngCore, p: ParticleView<'_, X>) {
     *p.pos = *p.pos + *p.vel;
 }
 
-fn run<S: Search<Pos = W, Outer = ()>>(search: &mut S, seed: u64) -> (Vec<BestSoFar<W>>, Vec<Particle<W>>) {
+fn run<S: Search<Pos = W, Outer = ()> + Clone + Send>(search: &mut S, seed: u64) -> (Vec<BestSoFar<W>>, Vec<Particle<W>>) {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut group = initial_group(&Problem::standard(), 10, &mut rng);
     let bests = Run::new(5, search, &mut group, seed).collect();

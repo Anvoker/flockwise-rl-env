@@ -44,7 +44,7 @@ Version 2 was solved just as fast as v1 (6 turns). As agreed beforehand, task 2,
 |---|---|---|---|---|
 | B (visible) | −71.3 | about −190 | −80 | timing quality |
 | C (hidden) | −9.85 | −11.96 | −11.0 | timing quality under other wind and weights |
-| A (hidden) | −25.4 | overlaps | −35 | routing around zones |
+| A (hidden) | −25.4 (−25.6 over 1,000 runs, 2026-10-27) | overlaps | −35 | routing around zones |
 
 Every run must also return a feasible route, within a tolerance of 0.001. A stricter tolerance (0.000001) caused false failures: the objective penalizes zone intrusion at 1,000 per unit, so cutting a corner by 0.0001 costs only 0.1 points and saves distance, and the optimizer takes it. The largest cut seen in 6,000 plans was about 0.00012. The timing threshold in C was also moved from −10.5 to −11.0 after one false failure in 1,000 runs, which still leaves it about 1 point above the fastest-timings mode.
 
@@ -73,7 +73,7 @@ Version 3 was solved just as easily (9 turns). Every version so far handed the a
 
 The instruction never mentions `OuterAware`, `see_outer`, associated versus generic outer types, cloning per particle, preparing into separate values, per-particle random streams or a serial reduction. Each of those is a design decision left to the agent.
 
-**Fairness: a second, independent design passes the verifier.** `tools/alternatives/nested-search/prepared/` differs from the reference on every axis that matters. The outer position is a trait *parameter* (`Rule<O>`), so context-free components need no phantom type. Preparing a component builds a separate value (`Rule::Ready`) instead of setting state on a fresh clone. The constructors have no bounds at all, which checks that the hidden tests don't depend on how the agent writes them. Random streams come from a hash of the seed and the particle index, and the best so far from a parallel reduction. The reference planner compiles against it unchanged. It passes every check, and its false-failure rate is measured like the reference's.
+**Fairness: a second, independent design passes the verifier.** `tools/alternatives/nested-search/prepared/` differs from the reference on every axis that matters. The outer position is a trait *parameter* (`Rule<O>`), so context-free components need no phantom type. Preparing a component builds a separate value (`Rule::Ready`) instead of setting state on a fresh clone. Only some constructors are unbounded (`Confined::new`, `PsoRule::new` and the closure builders); `Swarm1::new`, `Swarm2::new` and `InnerSearch::new` have bounds. (An earlier version of this sentence said none had bounds. The second audit corrected it, and the v5 trial solutions, whose constructors have none, were added as alternatives.) Random streams come from a hash of the seed and the particle index, and the best so far from a parallel reduction. The reference planner compiles against it unchanged. It passes every check, and its false-failure rate is measured like the reference's.
 
 Other fairness decisions:
 
@@ -236,7 +236,7 @@ Adapted from the library's own history after 2026-02-06 (owned searchers, the ne
 
 - **Crate:** `nestswarm`, depending only on `rand` 0.9.2. The name is deliberately not swarmkit's.
 - **Naming a part at a call site:** `mover.on_part::<X>()`, from an `OnPart` extension trait. A turbofish on a struct (`PartMover::<X, _, _>`) would force `_` placeholders for internal type parameters, which the annotation rule forbids. A method with one generic parameter names only the domain type. The library's own history had chained methods like this by 2026-04-30.
-- **Compile checks without `trybuild`:** `trybuild` compares exact compiler messages, which change with the agent's design. Instead, each case is a file with a `//CASE` line and a `//FAIL` line. The `CASE` form must compile and the `FAIL` form must not. Because the two forms differ in one line, a passing check proves the rejection comes from the intended mismatch and not from something unrelated.
+- **Compile checks without `trybuild`:** `trybuild` compares exact compiler messages, which change with the agent's design. Instead, each case is a file with a `//CASE` line and a `//FAIL` line. The `CASE` form must compile and the `FAIL` form must not. Because the two forms differ in one line (two in `inner_unit_not_a_part`, both for the same mismatch), a passing check proves the rejection comes from the intended mismatch and not from something unrelated.
 - **The starting state keeps two real bugs from 2026-02-03:** the PSO mover sets the velocity to minus the step it just took, and `SearcherIter` runs one iteration too few. The instruction states the PSO formula and the iteration count, so both are deviations from a stated spec, not hidden traps. They add a small bug-fixing part to a mostly architectural task.
 - **Mover order and convergence:** with the nested mover *first* in a two-mover searcher, the inner result is computed for the outer particle's position before the outer mover moves it, so every evaluated pair holds a slightly stale inner part. The outer search then settles away from the optimum. The reference behaves the same, so with the nested mover first the test asserts a calibrated bound instead of the optimum: over 900 runs of the reference, the final fitness gap was at most 0.37 and the starting gap at least 5.4, so a bound of 1.0 still rejects a search that doesn't work. Context delivery is checked for both orders.
 - **Calibration: v1 was too easy (2026-10-26).** Sonnet 5.5 solved it in 7 turns. Diagnosis: the locked API carried the author's February design decisions, and the instruction read like a spec of the solution.
@@ -286,6 +286,28 @@ The hardened verifier, re-checked in full:
 - 3/3 alternative designs are accepted.
 - 24/24 mutants are caught, both hacks included.
 - No run fails in 1,000 per test file on the reference, or in 333 on the alternative design, with crashes and timeouts now counted.
+
+### Second audit: mutants, compile checks, links (2026-10-27)
+
+A second fresh audit read every mutant against the instruction, judged each compile check against designs other than the reference's, and checked every link. The links were all fine. Its findings, and what was done:
+
+- **The real-bug mutant wasn't the real bug.** `no_best_reset` removes the reset, but the reference clones a fresh inner search for every particle, so the February form never happened. It was caught only through reruns at the top level. A new mutant, `inner_search_reused`, keeps inner searches and reuses them for later particles without a reset, as the original code did. The independence test catches it the way the original bug showed: particle B gets particle A's timings.
+- **Two mutants were caught by the reference's own panic.** If a component is used unprepared, the reference panics. So `region_sees_nothing` and `rules_see_nothing` show only that a crash fails, and their descriptions now say so. The alternative design can't express a missing preparation at all, and wrong preparations that don't crash are covered by `inner_prepared_for_default` and `inner_prepared_for_swarm_best`.
+- **Two mutants deadlocked.** `shared_best_arc` and `one_rng_for_all_particles` held a lock across rayon work, so they were caught by timeouts, not by their bugs. They now hold the lock only to copy a value or draw a seed, and they fail on what they're about: different results at different thread counts.
+- **Bug classes without a mutant.** `cognitive_uses_swarm_best` and `region_before_rule` were added; both are caught.
+- **A false fairness claim.** The README and this file said the alternative design has no constructor bounds, but three of its constructors have them. So no accepted design showed that types settled late, at the point of use, pass the verifier. That's the style that exposed v4's unfair compile checks. The v5 trial solutions by Haiku and Sonnet are written in that style, and they're now accepted alternatives, unedited.
+- **Hidden helpers assumed `Run::new` needs only `Search`.** Three helpers bounded their searches by `Search` alone. A valid design whose `Run::new` also requires `Clone` or `Send` wouldn't have compiled them. The helpers now use the instruction's own shape, `Search<...> + Clone + Send`.
+- **A thread check that could be flaky on 2 CPUs.** Scoring an outer position was so fast that the starting thread could finish all of it before another thread stole any. The recording objective now sleeps 0.1 ms per call, so other threads always join.
+- Wording: the compile checks' twins differ in one line, except `inner_unit_not_a_part`, which differs in two for the same mismatch.
+
+A judgment kept as is: `borrowed_and_owned_compositions_agree` assumes a component's randomness doesn't depend on its closure's type. The instruction ties all randomness to the seed, so that holds for any reasonable design.
+
+Re-checked afterwards:
+
+- 5/5 alternatives are accepted.
+- 27/27 mutants are caught, with no timeouts and none failing to build. `mutants.py` now reports a variant whose library doesn't compile as proving nothing, instead of as caught.
+- `h_parallel` fails no run in 1,000 on either design.
+- Harbor: the reference scores 1.0 and the do-nothing agent 0.0.
 
 ## Calibration
 
