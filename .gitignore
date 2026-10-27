@@ -5,3 +5,4 @@ STATUS.md
 .claude/
 jobs/
 jobs-probe/
+__pycache__/
