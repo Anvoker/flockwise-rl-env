@@ -104,8 +104,10 @@ fn a_clone_reproduces_the_original() {
 
     let best_a = Run::new(5, &mut a, &mut group_a, 0).last().unwrap();
     let best_b = Run::new(5, &mut b, &mut group_b, 0).last().unwrap();
-    assert_eq!(best_a, best_b);
-    assert_eq!(group_a, group_b);
+    assert!(best_a.same(&best_b), "{best_a:?}
+{best_b:?}");
+    assert!(group_a.same(&group_b), "{group_a:?}
+{group_b:?}");
 }
 
 #[test]
@@ -127,6 +129,6 @@ fn a_used_search_runs_again_like_a_fresh_one() {
         let best = Run::new(5, search, &mut group, 1).last().unwrap();
         results.push((best, group));
     }
-    assert!(results[0] == results[2], "a used search behaves differently from a fresh one");
-    assert!(results[1] == results[2], "a clone of a used search behaves differently from a fresh one");
+    assert!(results[0].same(&results[2]), "a used search behaves differently from a fresh one");
+    assert!(results[1].same(&results[2]), "a clone of a used search behaves differently from a fresh one");
 }

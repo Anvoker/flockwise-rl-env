@@ -1,6 +1,9 @@
 //! Helpers for the hidden tests: recording closures and a user-written rule.
 #![allow(dead_code)]
 
+pub mod judge;
+pub use judge::{Same, same_route};
+
 use flockwise::{BestSoFar, Particle, ParticleView, Point};
 use rand::{Rng, RngCore};
 use std::collections::HashMap;

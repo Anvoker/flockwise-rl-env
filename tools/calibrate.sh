@@ -36,10 +36,14 @@ rm -rf "$out" && mkdir -p "$out"
 for bin in $bins; do
     name=$(basename "$bin" | sed 's/-[0-9a-f]*\(\.exe\)\{0,1\}$//')
     case " ${CALIBRATE_ONLY:-$name} " in *" $name "*) ;; *) continue ;; esac
+    # A run fails if its binary exits non-zero: failed tests, but also
+    # crashes and timeouts. Tests run with the harness's default threading,
+    # as in the verifier.
     seq 1 "$runs" | xargs -P "$jobs" -I{} sh -c \
-        "FLOCKWISE_SEED_BASE=\$(( {} * 10 )) '$bin' --test-threads=1 2>&1 | grep -E '^test .* FAILED$' || true" \
+        "out=\$(FLOCKWISE_SEED_BASE=\$(( {} * 10 )) timeout -k 10 ${TEST_TIMEOUT:-180} '$bin' 2>&1); s=\$?;
+         [ \$s -eq 0 ] || { echo \"\$out\" | grep -E '^test .* FAILED$'; echo \"run failed: exit \$s\"; }" \
         >"$out/$name.txt"
-    total=$(grep -c 'FAILED' "$out/$name.txt" || true)
+    total=$(grep -c '^run failed' "$out/$name.txt" || true)
     echo "$name: $total failures in $runs runs"
     sort "$out/$name.txt" | uniq -c | sed 's/^/    /'
 done

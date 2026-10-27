@@ -4,10 +4,12 @@
 //! compositions that own their data.
 
 mod common;
+mod hidden_common;
 
 use common::two_part::*;
 use common::*;
 use flockwise::*;
+use hidden_common::Same;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 use rayon::ThreadPoolBuilder;
@@ -106,7 +108,7 @@ fn borrowed_and_owned_compositions_agree() {
     let seed = 2 + seed_base();
     let owned = run(&mut owned_outer(data.problem()), seed);
     let borrowed = run(&mut borrowed_outer(&data), seed);
-    assert!(owned == borrowed, "borrowing the data changed the results");
+    assert!(owned.same(&borrowed), "borrowing the data changed the results");
 }
 
 #[test]
@@ -117,11 +119,11 @@ fn borrowed_compositions_run_in_pools_clone_and_move_to_scoped_threads() {
 
     let in_one = ThreadPoolBuilder::new().num_threads(1).build().unwrap().install(|| run(&mut search.clone(), seed));
     let in_four = ThreadPoolBuilder::new().num_threads(4).build().unwrap().install(|| run(&mut search.clone(), seed));
-    assert!(in_one == in_four, "a borrowed composition depends on the thread count");
+    assert!(in_one.same(&in_four), "a borrowed composition depends on the thread count");
 
     let mut moved = search.clone();
     let on_thread = std::thread::scope(|s| s.spawn(move || run(&mut moved, seed)).join().unwrap());
-    assert!(on_thread == in_one, "a borrowed composition moved to a scoped thread gave other results");
+    assert!(on_thread.same(&in_one), "a borrowed composition moved to a scoped thread gave other results");
 }
 
 /// A composition stored in a struct next to a reference to its data.

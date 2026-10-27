@@ -63,6 +63,6 @@ User code never names anything else from the library, and never spells out the l
 2. The compile checks in `compile_checks/`: each case must compile in its `//CASE` form and fail to compile in its `//FAIL` form.
 3. A small composition under Miri, with the flags `ci.sh` sets (`-Zmiri-tree-borrows -Zmiri-ignore-leaks`, because of rayon's internals), which fails on undefined behaviour, data races included.
 
-Each test file must finish within 3 minutes (the reference solution takes a few seconds).
+Each test file must finish within 3 minutes (the reference solution takes a few seconds). The verifier runs the tests as an unprivileged user, who can't write to the repository.
 
 The verifier runs the same three steps with more tests: the PSO update checked against its formula, other compositions of the same components, such as three levels of nesting, swapped roles and field orders, components that use or ignore the outer position in every combination, user-written rules, closures that record every outer position they're given and count their calls and preparations, compositions that borrow their data, components that draw more or less randomness, searches cloned, reused and run side by side, searches moved to other threads, results compared across thread counts, the threads that do the work recorded, ties between particles, other route scenarios, and more compile checks for compositions that don't fit. It also reports how much faster 8 threads are than 1, without scoring it.

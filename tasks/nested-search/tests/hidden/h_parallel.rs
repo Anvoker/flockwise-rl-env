@@ -79,7 +79,7 @@ fn nested_search_gives_the_same_results_with_any_thread_count() {
         let one = in_pool(1, || nested_run(seed, particles, iterations, inner_iterations));
         for threads in [2, 3, 8] {
             let many = in_pool(threads, || nested_run(seed, particles, iterations, inner_iterations));
-            assert!(one == many, "seed {seed}: {threads} threads gave different results than 1");
+            assert!(one.same(&many), "seed {seed}: {threads} threads gave different results than 1");
         }
     }
 }
@@ -103,7 +103,7 @@ fn a_user_rule_gives_the_same_results_with_any_thread_count() {
         group
     };
     let seed = 9 + seed_base();
-    assert!(in_pool(1, || run(seed)) == in_pool(6, || run(seed)));
+    assert!(in_pool(1, || run(seed)).same(&in_pool(6, || run(seed))));
 }
 
 fn scenario() -> Scenario {
@@ -129,7 +129,8 @@ fn plan_gives_the_same_route_with_any_thread_count() {
     let s = scenario();
     let one = in_pool(1, || plan(&s, &budget, 3));
     let four = in_pool(4, || plan(&s, &budget, 3));
-    assert_eq!(one, four);
+    assert!(same_route(&one, &four), "{one:?}
+{four:?}");
 }
 
 #[test]

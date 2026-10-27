@@ -2,10 +2,12 @@
 //! one component draws never changes what any other component receives.
 
 mod common;
+mod hidden_common;
 
 use common::two_part::*;
 use common::*;
 use flockwise::*;
+use hidden_common::Same;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 
@@ -31,7 +33,7 @@ fn run_outer<S: Search<Pos = W, Outer = ()>>(mut search: S, seed: u64) -> Outcom
 fn assert_same_for_every_k(name: &str, run: impl Fn(usize) -> Outcome) {
     let base = run(0);
     for k in [1, 3, 8] {
-        assert!(run(k) == base, "{name}: drawing {k} more random numbers changed the run");
+        assert!(run(k).same(&base), "{name}: drawing {k} more random numbers changed the run");
     }
 }
 

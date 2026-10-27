@@ -28,13 +28,20 @@ This is the problem the library's author worked through in February 2026 (compos
 
 ### How the verifier works
 
-Only the agent's `src/` reaches the verifier, which runs in a fresh container without network. The locked files, the tests and `Cargo.toml` are restored there. The verifier runs:
+Only the agent's `src/` reaches the verifier, which runs in a fresh container without network. The tests, `Cargo.toml` and the locked files (`api.rs`, the route model) are restored there. The agent's `lib.rs` still decides which files get compiled, so the hidden tests don't rely on the restored files to judge. They compare results field by field, and score routes with their own copy of the model. A hidden test also checks that the library's model gives the same results. The verifier runs:
 
 1. **Tests:** the visible ones plus hidden ones written against the same public API. The hidden tests cover the PSO formula, three levels of nesting, swapped roles and field orders, every combination of components that use or ignore the outer position, user-written rules, recording closures that log every preparation and call, searches that are cloned, reused and run side by side or on other threads, results compared across 1 to 8 threads, the threads that actually do the work, ties between particles, and other route scenarios.
 2. **Compile checks:** compositions that don't fit must be rejected by the type system. Each case has a one-line twin that must compile, so a passing check proves the rejection comes from the intended mismatch.
 3. **Miri** on a small composition in a 2-thread pool, so that undefined behaviour and data races fail.
 
-Each test file has a 3-minute limit, so a deadlock fails instead of stalling. The reward is 1 only if every check passes. The speedup of 8 threads over 1 is measured and reported, but not scored.
+The agent's code is treated as untrusted:
+
+- Everything is compiled before any of the agent's code runs.
+- The tests run as an unprivileged user that can't write to the repository or the tests. Its leftover processes are killed after every step.
+- Miri's isolation keeps the interpreted code away from the file system.
+- Root writes the reward last, after deleting any reward file left behind. Harbor mounts the log directory from the host, writable by any user, and it reads `reward.json` before `reward.txt`, so this deletion is what protects the reward.
+
+Each test file has a 3-minute limit, so a deadlock fails instead of stalling. The reward is 1 only if every check passes. The speedup of 8 threads over 1 is measured and reported, but not scored. The container's CPU limit isn't always enforced, so the number varies between machines.
 
 ### How it resists reward hacking
 
@@ -53,13 +60,15 @@ No check scans the agent's source code. Each hack is caught by the behaviour it 
 | `'static` bounds or copying instead of borrowing | Compositions over data that is neither `Clone` nor `'static`, returned, nested, cloned and sent to scoped threads |
 | One random stream shared by a particle's components | A rule or seeder that draws extra numbers must leave the rest of the run bit-identical |
 | `unsafe` with undefined behaviour, data races | Miri |
+| Compiling its own copies of the locked files (`#[path]` in `lib.rs`), so the tests' judges agree with anything | The hidden tests judge with their own code: field-by-field equality and their own copy of the route model, which the library's must match |
+| Tampering with the verifier from inside a test: rewriting tests not yet compiled, writing `reward.json` | Everything is compiled first; tests run unprivileged and their leftover processes are killed; root deletes stray reward files and writes the reward last |
 
 ### Evidence that the verifier works
 
 - **Valid designs are accepted:** besides the reference, a second solution designed independently, with the outer position as a trait parameter instead of an associated type, components prepared into separate values instead of mutated copies, no bounds on its constructors, and hashed random streams, passes every check ([`tools/alternatives`](tools/alternatives)). So do two smaller variants of the reference.
-- **Known-bad solutions are rejected:** [`tools/mutants.py`](tools/mutants.py) puts one bug at a time into the reference and runs the verifier. All 22 are caught, among them a stale best so far carried between searches (a real bug in the library's history), components prepared for the wrong particle or too often, preparation skipped on a rerun, one random stream shared by all particles or by one particle's components, the inner seed drawn after the seeder, `'static` bounds on components, serial execution, and a best that's shared between clones behind an `Arc<Mutex>`.
-- **Correct solutions aren't rejected by bad luck:** [`tools/calibrate.sh`](tools/calibrate.sh) runs the tests over many disjoint seed ranges. The reference fails no test in 1,000 runs per test file, so each file's false-failure rate is below 0.3% at 95% confidence. The alternative design also has 0 failures (333 runs per file, 1,000 for the files changed last). Calibration found false failures in three tests before that. Their thresholds were then set from each test's measured distribution over the same seeds, not moved until the failures stopped ([DESIGN.md](DESIGN.md#calibration)).
-- **Harbor end to end:** the reference solution gets reward 1.0, and an agent that does nothing gets 0.0.
+- **Known-bad solutions are rejected:** [`tools/mutants.py`](tools/mutants.py) puts one bug at a time into the reference and runs the verifier. All 24 are caught, among them a stale best so far carried between searches (a real bug in the library's history), components prepared for the wrong particle or too often, preparation skipped on a rerun, one random stream shared by all particles or by one particle's components, the inner seed drawn after the seeder, `'static` bounds on components, serial execution, and a best that's shared between clones behind an `Arc<Mutex>`. Two of them are hacks rather than bugs: a library that compiles its own lenient copy of the route model, or of `api.rs` to make all results compare equal.
+- **Correct solutions aren't rejected by bad luck:** [`tools/calibrate.sh`](tools/calibrate.sh) runs the tests over many disjoint seed ranges. A run counts as failed if its test binary exits non-zero for any reason, including a crash or a timeout. The reference fails no run in 1,000 per test file, so each file's false-failure rate is below 0.3% at 95% confidence. The alternative design fails none in 333. These runs are native, with the test harness's default threading, not inside the 2-CPU container. Calibration found false failures in three tests before that. Their thresholds were then set from each test's measured distribution over the same seeds, not moved until the failures stopped ([DESIGN.md](DESIGN.md#calibration)).
+- **Harbor end to end:** the reference solution gets reward 1.0, and an agent that does nothing gets 0.0. A solution with a real bug, plus code that rewrites a later test and writes `reward.json` from inside a test, gets 0.0. Under the earlier, unhardened `test.sh` it got 1.0 ([DESIGN.md](DESIGN.md#hardening-the-verifier-2026-10-27)).
 
 ### Pass rates
 

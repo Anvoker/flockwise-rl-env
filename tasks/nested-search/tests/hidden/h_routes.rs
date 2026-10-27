@@ -3,8 +3,10 @@
 //! quality is checked closely.
 
 mod common;
+mod hidden_common;
 
 use common::*;
+use hidden_common::{judge, same_route};
 use flockwise::routes::model::{Scenario, Wind, Zone};
 use flockwise::routes::{Budget, plan};
 
@@ -67,10 +69,10 @@ fn best_of_three(s: &Scenario) -> f64 {
     let mut best = f64::NEG_INFINITY;
     for seed in base..base + 3 {
         let route = plan(s, &BUDGET, seed);
-        if let Err(why) = s.check(&route, SLACK) {
+        if let Err(why) = judge::check(s, &route, SLACK) {
             panic!("seed {seed}: infeasible route: {why}\n{route:?}");
         }
-        best = best.max(s.score(&route));
+        best = best.max(judge::score(s, &route));
     }
     best
 }
@@ -90,5 +92,28 @@ fn optimizes_timing() {
 #[test]
 fn different_seeds_explore_differently() {
     let s = timing_matters();
-    assert_ne!(plan(&s, &BUDGET, 1), plan(&s, &BUDGET, 2));
+    assert!(!same_route(&plan(&s, &BUDGET, 1), &plan(&s, &BUDGET, 2)));
+}
+
+/// The library's route model is the published one: its score and check give
+/// the same results as the verifier's copy, on a planned route and on routes
+/// that break each constraint.
+#[test]
+fn the_library_uses_the_published_model() {
+    let budget = Budget { particles: 6, iterations: 4, inner_particles: 4, inner_iterations: 4 };
+    for s in [around_the_zones(), timing_matters()] {
+        let planned = plan(&s, &budget, 5);
+        let mut routes = vec![planned; 5];
+        routes[1].timings.0.iter_mut().for_each(|t| *t *= 0.5);
+        routes[2].timings.0.iter_mut().for_each(|t| *t *= 10.0);
+        routes[3].waypoints.0[0] = s.zones[0].center;
+        routes[4].waypoints.0[1] = [s.area[1][0] + 5.0, s.area[0][1] - 1.0];
+        for (i, r) in routes.iter().enumerate() {
+            let (theirs, ours) = (s.score(r), judge::score(&s, r));
+            assert_eq!(theirs.to_bits(), ours.to_bits(), "route {i}: Scenario::score gave {theirs}, the model gives {ours}");
+            for tolerance in [1e-3, SLACK] {
+                assert_eq!(s.check(r, tolerance), judge::check(&s, r, tolerance), "route {i}, tolerance {tolerance}");
+            }
+        }
+    }
 }

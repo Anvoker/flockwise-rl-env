@@ -4,16 +4,9 @@ This file records the design decisions behind the environment and the reasons fo
 
 ## The environment
 
-One Rust codebase: a small particle swarm optimization (PSO) library, cut down from an early version of [swarmkit](https://github.com/Anvoker/swarmkit). Two tasks are built on it, and both come from real problems in that library's history:
+One Rust codebase: a small particle swarm optimization (PSO) library, cut down from an early version of [swarmkit](https://github.com/Anvoker/swarmkit). It started as two planned tasks, both from real problems in that library's history: composable nested search (2026-02-03 to 2026-02-07) and reproducible parallel search (2026-04-23 to 2026-05-08). Version 3 merged the second into the first, so the environment ships one task, `nested-search`, in one setting.
 
-| Task | Real history | What the agent must do |
-|---|---|---|
-| 1. Composable nested search | 2026-02-03 to 2026-02-07 | Make a composable searcher architecture compile and work: nested searches, movers on parts of a particle, context passed from the outer search to the inner one. |
-| 2. Reproducible parallel search | 2026-04-23 to 2026-05-08 | Parallelize the library so that seeded runs give identical results at any thread count. To be designed after task 1 ships. |
-
-Task 1's reference solution becomes task 2's starting state, as it did in the real history.
-
-No difficulty knobs in the first version: each task ships in one setting.
+**How to read this file.** It's a log, in the order decisions were made. The sections from [What the change makes possible](#what-the-change-makes-possible) to [Testing the verifier](#testing-the-verifier) record version 1's design and use its names (`nestswarm`, `Unit`, `FitCalc`, `Contextful`, `examples/`, `tests/pso_update.rs`). The version sections say what changed after that. The current task is in [`tasks/nested-search`](tasks/nested-search), and the [README](README.md) describes it.
 
 ## Task 1: composable nested search
 
@@ -29,7 +22,7 @@ Version 1 turned out far too easy: Claude Sonnet 5.5 solved it in 7 turns (see [
 
 - **New vocabulary.** swarmkit is public, including on crates.io, so v1's names (`GBestSearcherOne`, `NestedMover`, `Contextful`, ...) were cues to a published solution. Every name is now plain and new: crate `flockwise`, `Point`, `OuterAware`/`see_outer`, `Objective`/`score`, `Region`/`confine`, `Rule`/`apply`, `Seeder`, `BestSoFar`, `ParticleView`, `PsoParams`, `PsoRule`, `Swarm1`, `Swarm2`, `Confined`, `ForField`/`for_field`, `InnerSearch`, `Search`, `Run`.
 - **Three field traits instead of one.** `SplitFrom` (a view of one field of a particle), `ReadFrom` (read a field out of a whole position) and `WriteInto` (write a field back), each with its own `Whole`. That is the shape of the original code's three traits. The library has to tie them together itself, which brings back the inference work of 2026-02-05. With one trait, the library could derive all three operations from a single accessor.
-- **A real user of the library: drone delivery routes** (`src/routes/`). An outer search over waypoints, and for every candidate route an inner search over leg timings. Each leg's fastest possible duration depends on the wind where and when it's flown, so it depends on the waypoints and on how long the earlier legs took. Its region therefore has to be shown the outer route and confine legs in order. That's the structure of the original sailing code, written fresh, with its own physics and names. The model (`src/routes/model.rs`) is locked like `api.rs`, because the verifier scores routes with it. The planner (`src/routes/plan.rs`) is agent code. In the starting state it's written against the old design, function-pointer inner search included, so the library doesn't compile, as at `5e45776`, where all 15 errors were in the sailing module.
+- **A real user of the library: drone delivery routes** (`src/routes/`). An outer search over waypoints, and for every candidate route an inner search over leg timings. Each leg's fastest possible duration depends on the wind where and when it's flown, so it depends on the waypoints and on how long the earlier legs took. Its region therefore has to be shown the outer route and confine legs in order. That's the structure of the original sailing code, written fresh, with its own physics and names. The model (`src/routes/model.rs`) is locked like `api.rs`, so that the routes have one definition of feasible and good. (Since 2026-10-27 the hidden tests score routes with their own copy of it; see [Hardening the verifier](#hardening-the-verifier-2026-10-27).) The planner (`src/routes/plan.rs`) is agent code. In the starting state it's written against the old design, function-pointer inner search included, so the library doesn't compile, as at `5e45776`, where all 15 errors were in the sailing module.
 - **Fewer visible examples.** The role-swap test is hidden now. Visible: single search, the PSO update, two-level nesting, routes, and the Miri composition.
 - **Offline docs.** The standard library's docs (the `rust-docs` component) and the dependencies' docs (`cargo doc`) are in the image. docs.rs stays unreachable, because it hosts swarmkit's docs.
 - **The instruction states intent,** as described under the decisions below.
@@ -105,6 +98,8 @@ Both requirements are stated as behaviour, with the realistic example, and the i
 **Checked before any trial:** both v4 trial solutions, and the v4 reference and alternative, fail the new checks, so the requirements bite. The updated reference derives one stream per (rule, particle, iteration). The updated alternative keeps a persistent stream per (rule, particle) for the whole run. That exposed the subtlest interaction: its inner search lent its stream to the seeder, so a seeder that drew more shifted every later inner search's seed. Giving the seeder its own stream fixed it. The reference escapes this only because its streams are fresh every iteration. New mutants: both rules sharing one stream, the inner seed drawn after the seeder, closure components required to be `'static`.
 
 ### What the change makes possible
+
+*Version 1's design, kept as the record. Later versions changed the names and files; see the version sections above.*
 
 Each capability below was impossible in the starting state. Verification is built from this list: each one is proven by code that compiles and runs, not by inspecting the agent's source.
 
@@ -270,6 +265,28 @@ The same tool also runs **alternative valid solutions** (`--alternatives`), whic
 - **Deadlocks** (found by the self-test): the mutant whose best so far is behind an `Arc<Mutex>` deadlocks under rayon (a thread holding the lock waits on parallel work that needs it), and the self-test hung on it for an hour. Each test file's binary now runs under a 3-minute limit, about 58 times the slowest reference file in Docker (3.1 s), and the instruction states the limit. The verifier's overall timeout went up to 1 hour, so a solution that deadlocks in every file still gets a clean 0 rather than a Harbor timeout.
 - Rust doesn't guarantee the precision of float functions like `powi`, and Miri varies it on purpose. Tests that compare results exactly must use only operations IEEE 754 makes exact (`d * d`, not `powi(2)`). Found when the clone-equality check failed under Miri only.
 
+### Hardening the verifier (2026-10-27)
+
+Before publishing, the author had a second Claude instance audit the repository, without access to the conclusions reached so far. It found the trial results genuine. No agent touched the hidden tests, the reference solution or the verifier, and every agent's copies of the locked files were byte-identical to the originals. But it found two holes in the verifier, and both turned out to be real:
+
+1. **"Locked" files that weren't locked.** `test.sh` restored `api.rs` and `routes/model.rs`, but the agent's `lib.rs` decides which files are compiled. A `#[path]` attribute can point `mod api` or `mod model` at the agent's own copies. Two new mutants do exactly that. `fake_route_model` compiles a route model that accepts every route and scores it 0, so the planner needn't work. `lenient_equality` compiles an `api.rs` whose particles and bests always compare equal, which hides one random stream per particle. Both escaped every check of the committed verifier. The hidden tests now judge with their own code. They compare results field by field (positions with the tests' own `PartialEq`, scores bit for bit), score routes with their own copy of the model, and check that the library's model gives the same results as that copy. Both mutants are now caught. This is not a source scan: the agent may lay out its files as it likes, but the judges no longer come from its crate.
+2. **The agent's code ran with full rights during grading.** Test binaries ran as root, next to the verifier's scripts and logs, and each test file was compiled just before it ran, so an earlier test could rewrite a later one. Worse, Harbor reads `reward.json` before `reward.txt`, and `test.sh` wrote only `reward.txt`. A Docker demonstration took the reference with nothing running in parallel (a bug only `h_parallel` catches), plus code that runs once in the first search. That code wrote `reward.json` and rewrote `tests/h_parallel.rs`. Under the committed `test.sh` the rewrite went through, the real bug passed, and the reward was **1.0**, even though Miri failed. `test.sh` now compiles everything before running any of the agent's code. It runs every test binary as `nobody`, in a scratch directory, and kills that user's leftover processes after each step. Root then deletes any reward file and writes the reward last. Under the new `test.sh` the same solution got "Permission denied" on the test file and scored **0.0**. Its write to `reward.json` still succeeded: Harbor bind-mounts the log directory, and it's writable by any user. The final deletion is what protects the reward, not the directory's permissions.
+
+What remains exposed, knowingly. Miri runs as root, because it needs root's toolchain and the build directory, and it relies on Miri's isolation, which rejects file and process access by default. The unprivileged user can still overwrite other files in the log directory. Those are human-readable logs; `results.json` and the reward are written by root afterwards.
+
+The audit's other findings were fixed as well:
+
+- Calibration counted only `FAILED` lines, so a crash or a timeout counted as a pass. It now counts every non-zero exit, under a time limit, with the test harness's default threading, as in the verifier.
+- This file's v1 sections are now labelled as history, and the calibration table renders again.
+- The trial script no longer names a default location for the token file.
+
+The hardened verifier, re-checked in full:
+
+- Harbor: the reference scores 1.0 and the do-nothing agent 0.0.
+- 3/3 alternative designs are accepted.
+- 24/24 mutants are caught, both hacks included.
+- No run fails in 1,000 per test file on the reference, or in 333 on the alternative design, with crashes and timeouts now counted.
+
 ## Calibration
 
 ### Log
@@ -279,12 +296,25 @@ The same tool also runs **alternative valid solutions** (`--alternatives`), whic
 | 2026-10-26 | nested-search v1 | Claude Sonnet 5.5 (subscription) | Claude Code via Harbor 0.25.0 | 1 h agent time, network limited to the model API | 1 | Pass: 7 turns, 130 s agent time, about $0.40 at API prices. A genuine solution, close to the reference's design, with no hacks. |
 | 2026-10-26 | nested-search v2 | Claude Sonnet 5.5 (subscription) | Claude Code via Harbor 0.25.0 | same | 1 | Pass: 6 turns, 153 s agent time, about $0.42. Genuine; locked files untouched. The three field traits, the hidden role swap and the route domain made no visible difference. |
 | 2026-10-26 | nested-search v3 | Claude Sonnet 5.5 (subscription) | Claude Code via Harbor 0.25.0 | same | 1 | Pass: 9 turns, 177 s agent time, about $0.46. Genuine: every check passed, `api.rs` untouched. Per-particle random streams from a hash of the seed and the particle index (the same idea as one of the accepted alternatives), parallel scoring, a fresh inner search per particle. Reported speedup 3.6×. Parallelism added 3 turns and 24 seconds. |
-
 | 2026-10-26 | nested-search v4 | Claude Sonnet 5.5 (subscription) | Claude Code via Harbor 0.25.0 | 30 min agent time, network limited to the model API | 1 | Pass: 13 turns, 375 s agent time, about $0.78. Genuine. Its own design: an associated `Outer` type on every component, and `prepare(outer)` building a separate prepared value (between the reference and the alternative design). |
 | 2026-10-26 | nested-search v4 | Claude Haiku 5.5 (subscription) | same | same | 1 | Scored 0, then **pass on re-verification** after two unfair checks were fixed (below): 37 turns, 587 s agent time, about $0.35. Genuine: its own traits, no `unsafe`, locks or thread RNG. |
-
 | 2026-10-26 | nested-search v5 | Claude Sonnet 5.5 (subscription) | same | same | 1 | Pass: 11 turns, 383 s agent time, about $0.85. Genuine, and the intended design found directly: one stream per (seed, iteration, rule slot, particle), and a separately tagged stream for the seeder. |
 | 2026-10-26 | nested-search v5 | Claude Haiku 5.5 (subscription) | same | same | 1 | Scored 0, then **pass on re-verification** after one unfair test was fixed (below): 22 turns, 609 s agent time, about $0.37. Both new requirements passed on the first try. |
+
+One attempt isn't a pass rate, but it shows v1 is far too easy for current mid-size models: the solve took no exploration and one fix.
+
+The author's prediction before v2's trial: still too easy. The agreed plan: if Sonnet 5.5 passes v2, merge task 2 into this one (reproducible parallelism) and measure again. A failure counts only if it's fair, meaning the agent's solution is really wrong and not rejected by an unfair check.
+
+The author's decision before v3's trial (2026-10-26 18:40): if Sonnet 5.5 still passes easily, the pattern is clear. Every version so far hands the agent the design in `api.rs` and asks it to implement it, which frontier models do well. Adding requirements only makes the task longer. So v4 takes the design away: the agent has to come up with the architecture itself, under constraints that force the properties of the author's own design without describing it. v4 is then measured on both Claude Haiku 5.5 and Claude Sonnet 5.5, each with a 30-minute agent cap (halved from 1 hour, so a model that flails doesn't burn tokens).
+
+**Two unfair checks, found by Haiku's v4 trial (2026-10-26).** Haiku's solution failed only the compile checks and the three-level test. Both failures came from the verifier:
+
+- **The compile checks built compositions without running them.** Haiku's constructors have no bounds, so its types are settled where a composition is used (`Run::new`, `InnerSearch::new` with a typed search). A check that only builds a composition therefore demanded that every type be settled at construction, which the instruction doesn't require. Run as users run them, the same checks pass on Haiku's library, including every rejection. Every compile check now runs its composition (a `run!` helper in the prelude), which still rejects every mismatch.
+- **A test helper returned a search that borrowed its argument.** `fn level3(chain, log: &Log<YT>) -> impl Search<...>` captures the borrow's lifetime under Rust 2024's capture rules, even though the search holds only owned clones. Haiku's library requires `'static` for nested searches, a defensible choice the instruction doesn't rule out, so the helper didn't compile against it. The helpers now take what they keep by value.
+
+The agent's work was the same either way, so its saved source was re-verified with the fixed verifier instead of rerunning the agent: every check passes (Miri had already passed in the trial). The reference, the alternative design and Sonnet's solution also pass the fixed verifier.
+
+**What v4 shows.** Taking the design away doubled Sonnet's effort (13 turns and 6 minutes, against 9 turns and 3 minutes on v3) and made Haiku work for 37 turns, but neither came near the 30-minute cap. With a crisp specification, visible tests and a local CI script that runs the same checks, designing a generic Rust architecture of this size is well within reach even for the small model. The effort curve over v1-v4 (Sonnet: 7, 6, 9, 13 turns) is the measurable result of the tuning.
 
 **An unfair PSO test, found by Haiku's v5 trial (2026-10-26).** The test isolated the cognitive pull by giving a particle a personal best before the run and expecting it to survive. Haiku's library resets every particle's personal best when a run starts. The instruction says that nothing found in an earlier run may carry over into a search, so that's a defensible reading, arguably the more literal one. No test sets bests before a run any more: a user rule moves the particle away from its best during the run, and the test checks the combined pull (`cognitive * r1 + social * r2` per coordinate, which must come near its combined weight), next to the existing test that isolates the social pull. Haiku's saved source then passes everything, as do the reference, the alternative and Sonnet's solution.
 
@@ -300,24 +330,9 @@ The probe also explained why the planner that skips its timing search (`planner_
 
 The same self-test reported one alternative design rejected, on two runs in a row. It hadn't failed a test: it hadn't built. Under its work dir, a build script's path came to 260 characters, past Windows' limit, so the linker couldn't write it and every test counted as failed. From a shorter work dir all three alternatives pass. Docker runs the verifier on Linux, so only the local tools were affected; `selftest.sh` now warns about it. The lesson: a self-test should tell "rejected" apart from "didn't build".
 
-**Two unfair checks, found by Haiku's v4 trial (2026-10-26).** Haiku's solution failed only the compile checks and the three-level test. Both failures came from the verifier:
+### Setup
 
-- **The compile checks built compositions without running them.** Haiku's constructors have no bounds, so its types are settled where a composition is used (`Run::new`, `InnerSearch::new` with a typed search). A check that only builds a composition therefore demanded that every type be settled at construction, which the instruction doesn't require. Run as users run them, the same checks pass on Haiku's library, including every rejection. Every compile check now runs its composition (a `run!` helper in the prelude), which still rejects every mismatch.
-- **A test helper returned a search that borrowed its argument.** `fn level3(chain, log: &Log<YT>) -> impl Search<...>` captures the borrow's lifetime under Rust 2024's capture rules, even though the search holds only owned clones. Haiku's library requires `'static` for nested searches, a defensible choice the instruction doesn't rule out, so the helper didn't compile against it. The helpers now take what they keep by value.
-
-The agent's work was the same either way, so its saved source was re-verified with the fixed verifier instead of rerunning the agent: every check passes (Miri had already passed in the trial). The reference, the alternative design and Sonnet's solution also pass the fixed verifier.
-
-**What v4 shows.** Taking the design away doubled Sonnet's effort (13 turns and 6 minutes, against 9 turns and 3 minutes on v3) and made Haiku work for 37 turns, but neither came near the 30-minute cap. With a crisp specification, visible tests and a local CI script that runs the same checks, designing a generic Rust architecture of this size is well within reach even for the small model. The effort curve over v1-v4 (Sonnet: 7, 6, 9, 13 turns) is the measurable result of the tuning.
-
-One attempt isn't a pass rate, but it shows v1 is far too easy for current mid-size models: the solve took no exploration and one fix.
-
-The author's prediction before v2's trial: still too easy. The agreed plan: if Sonnet 5.5 passes v2, merge task 2 into this one (reproducible parallelism) and measure again. A failure counts only if it's fair, meaning the agent's solution is really wrong and not rejected by an unfair check.
-
-The author's decision before v3's trial (2026-10-26 18:40): if Sonnet 5.5 still passes easily, the pattern is clear. Every version so far hands the agent the design in `api.rs` and asks it to implement it, which frontier models do well. Adding requirements only makes the task longer. So v4 takes the design away: the agent has to come up with the architecture itself, under constraints that force the properties of the author's own design without describing it. v4 is then measured on both Claude Haiku 5.5 and Claude Sonnet 5.5, each with a 30-minute agent cap (halved from 1 hour, so a model that flails doesn't burn tokens).
-
-### Plan
-
-To be fixed before any runs: the models (at least two sizes, including DeepSeek through an agent harness and Claude through Claude Code headless), the harness, the turn, token and time caps, and the number of attempts per model. Pass rates are reported only together with that setup. Cost is estimated before spending.
+Every trial used Claude Code as the agent, run by Harbor 0.25.0 in Docker on the author's Claude subscription, with network access only to the model API: one attempt per model and version, with a 1-hour agent cap for v1-v3 and 30 minutes for v4-v5. Claude Sonnet 5.5 ran every version and Claude Haiku 5.5 ran v4 and v5. DeepSeek through another agent harness was considered in the plan but not run.
 
 ## Format
 

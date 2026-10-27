@@ -175,6 +175,55 @@ MUTANTS = {
     ),
 }
 
+def _replace(text: str, old: str, new: str) -> str:
+    if old not in text:
+        raise SystemExit(f"pattern not found: {old!r}")
+    return text.replace(old, new, 1)
+
+
+def lenient_model(src: Path) -> str:
+    """The route model, but every route is feasible and scores 0."""
+    text = (src / "routes" / "model.rs").read_text(encoding="utf-8")
+    text = _replace(text, "    pub fn score(&self, route: &Route) -> f64 {",
+                    "    pub fn score(&self, _route: &Route) -> f64 {" + NL + "        0.0" + NL + "    }" + NL + NL
+                    + "    pub fn real_score(&self, route: &Route) -> f64 {")
+    return _replace(text, "    pub fn check(&self, route: &Route, tolerance: f64) -> Result<(), String> {",
+                    "    pub fn check(&self, _route: &Route, _tolerance: f64) -> Result<(), String> {" + NL + "        Ok(())" + NL + "    }" + NL + NL
+                    + "    pub fn real_check(&self, route: &Route, tolerance: f64) -> Result<(), String> {")
+
+
+def lenient_api(src: Path) -> str:
+    """The public data types, but any two particles or bests are equal."""
+    text = (src / "api.rs").read_text(encoding="utf-8")
+    text = _replace(text, "#[derive(Copy, Clone, Debug, PartialEq)]" + NL + "pub struct Particle<P>",
+                    "#[derive(Copy, Clone, Debug)]" + NL + "pub struct Particle<P>")
+    text = _replace(text, "#[derive(Copy, Clone, Debug, PartialEq)]" + NL + "pub struct BestSoFar<P>",
+                    "#[derive(Copy, Clone, Debug)]" + NL + "pub struct BestSoFar<P>")
+    return (text + NL + "impl<P> PartialEq for Particle<P> {" + NL + "    fn eq(&self, _: &Self) -> bool {" + NL + "        true" + NL + "    }" + NL + "}" + NL
+            + NL + "impl<P> PartialEq for BestSoFar<P> {" + NL + "    fn eq(&self, _: &Self) -> bool {" + NL + "        true" + NL + "    }" + NL + "}" + NL)
+
+
+# Hacks rather than bugs: the agent's lib.rs decides which files are
+# compiled, so a solution can compile its own copies of the files the
+# verifier restores. An edit whose `old` is None creates a file from the
+# source tree.
+MUTANTS["fake_route_model"] = (
+    "The library compiles its own route model, which accepts and scores 0 any route, so the planner needn't work",
+    [
+        ("routes/model_lenient.rs", None, lenient_model, 0),
+        ("routes/mod.rs", "pub mod model;", '#[path = "model_lenient.rs"]' + NL + "pub mod model;", 1),
+    ],
+)
+MUTANTS["lenient_equality"] = (
+    "The library compiles its own api.rs, whose particles and bests are all equal, to hide one random stream per particle",
+    [
+        ("api_lenient.rs", None, lenient_api, 0),
+        ("lib.rs", "mod api;", '#[path = "api_lenient.rs"]' + NL + "mod api;", 1),
+    ]
+    + MUTANTS["one_stream_per_particle"][1],
+)
+
+
 # Valid solutions that make other reasonable design choices than the reference.
 ALTERNATIVES = {
     "parallel_reduce_for_best": (
@@ -251,6 +300,9 @@ ALTERNATIVE_TREES = {
 def apply(src: Path, edits) -> None:
     for name, old, new, count in edits:
         path = src / name
+        if old is None:
+            path.write_text(new(src), encoding="utf-8", newline=NL)
+            continue
         text = path.read_text(encoding="utf-8")
         found = text.count(old)
         if found == 0 or (count and found < count):

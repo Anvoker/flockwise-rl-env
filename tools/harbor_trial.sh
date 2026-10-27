@@ -3,14 +3,14 @@
 # The OAuth token (from `claude setup-token`) is read from a file into the
 # environment, so it never appears on a command line or in the output.
 #
-# Usage: tools/harbor_trial.sh <task dir> <model> [token file] [jobs dir]
-#   e.g. tools/harbor_trial.sh tasks/nested-search anthropic/claude-sonnet-5-5
+# Usage: tools/harbor_trial.sh <task dir> <model> <token file> [jobs dir]
+#   e.g. tools/harbor_trial.sh tasks/nested-search anthropic/claude-sonnet-5-5 token.txt
 #
 # Deletes no files. Harbor removes the containers it started when the run ends.
 set -uo pipefail
 task=$1
 model=$2
-token_file=${3:-$HOME/.secrets/claude-oauth-token.txt}
+token_file=$3
 jobs=${4:-jobs}
 
 if [ ! -s "$token_file" ]; then
