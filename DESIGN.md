@@ -358,4 +358,4 @@ Every trial used Claude Code as the agent, run by Harbor 0.25.0 in Docker on the
 
 ## Format
 
-Harbor / Terminal-Bench style: a Dockerfile, an instruction, tests and a reference solution per task. The current spec gets checked before building.
+Harbor / Terminal-Bench style: a Dockerfile, an instruction, tests and a reference solution per task. Checked against Harbor 0.25.0, the version every trial and smoke test used.

@@ -72,7 +72,7 @@ No check scans the agent's source code. Each hack is caught by the behaviour it 
 
 ### Pass rates
 
-Setup: Claude Code as the agent, run by Harbor 0.25.0 in Docker, with network access only to the model API. One attempt per model and version, so each row is a single sample, not a rate. Cost is at API prices.
+Setup: Claude Code as the agent, run by Harbor 0.25.0 in Docker, with network access only to the model API. One attempt per model and version, so each row is a single sample, not a rate. The trials ran on a Claude subscription; the cost column is what the same tokens would cost at API prices, as Claude Code reports it.
 
 | Version | Model | Agent time cap | Result | Agent time | Turns | Cost |
 |---|---|---|---|---|---|---|
@@ -110,3 +110,7 @@ tools/selftest.sh tasks/nested-search /tmp/selftest 1000   # alternatives, mutan
 ## Provenance
 
 The task and verifier were designed by Andrei Ionescu, from problems in the history of swarmkit, Andrei's own library. Most of the code in this repository was written with Claude Code under that direction. DESIGN.md records the decisions and the evidence behind them.
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT), at your option.
