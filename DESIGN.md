@@ -309,6 +309,22 @@ Re-checked afterwards:
 - `h_parallel` fails no run in 1,000 on either design.
 - Harbor: the reference scores 1.0 and the do-nothing agent 0.0.
 
+### Verifier coverage (v5)
+
+What the instruction asks for, against what the verifier actually checks. The checks sample each requirement; they don't prove it in general.
+
+| The instruction asks for | What the verifier checks |
+|---|---|
+| **Composition:** searches and rules are values that can be returned, stored, cloned and sent to threads; they nest, and rules can be restricted to one field | Compositions built in functions, stored, cloned (clones interleaved and independent), reused and moved to other threads; three levels of nesting; swapped roles and field orders |
+| **Context:** each component of an inner search is prepared exactly once for its outer particle, before the search scores anything | Recording closures log every preparation and call, at every depth |
+| **Inference:** user code never names the library's types, and compositions that don't fit don't compile | Every test is written that way, so a design that needs annotations fails to compile them. Six mismatched compositions must fail to compile, each beside a near-identical twin that must compile |
+| **Borrowed data:** components capture references to data that is neither `Clone` nor `'static` | Such compositions are returned, nested, cloned, run in pools and moved to scoped threads |
+| **Exact reproducibility in parallel:** a seeded run is bit-identical at any thread count | 1 thread against 2, 3, 4 or 8, in several compositions; the threads that do the work are recorded |
+| **Per-component randomness:** how much one component draws never changes what another receives | A rule (before or after PSO, beside or inside an inner search) or the seeder draws 1, 3 or 8 extra numbers, and the rest of the run must stay bit-identical |
+| **A working planner:** good, feasible routes | Unseen route scenarios, with score thresholds set from measured distributions |
+
+The verifier also checks the PSO update against its formula and ties between particles, and runs a small composition under Miri in a 2-thread pool, so undefined behaviour and data races fail.
+
 ## Calibration
 
 ### Log
@@ -322,6 +338,8 @@ Re-checked afterwards:
 | 2026-10-26 | nested-search v4 | Claude Haiku 5.5 (subscription) | same | same | 1 | Scored 0, then **pass on re-verification** after two unfair checks were fixed (below): 37 turns, 587 s agent time, about $0.35. Genuine: its own traits, no `unsafe`, locks or thread RNG. |
 | 2026-10-26 | nested-search v5 | Claude Sonnet 5.5 (subscription) | same | same | 1 | Pass: 11 turns, 383 s agent time, about $0.85. Genuine, and the intended design found directly: one stream per (seed, iteration, rule slot, particle), and a separately tagged stream for the seeder. |
 | 2026-10-26 | nested-search v5 | Claude Haiku 5.5 (subscription) | same | same | 1 | Scored 0, then **pass on re-verification** after one unfair test was fixed (below): 22 turns, 609 s agent time, about $0.37. Both new requirements passed on the first try. |
+| 2026-10-29 | nested-search v5, hardened verifier | Claude Sonnet 5.5 (subscription) | same | same | 1 | Pass: 15 turns, 418 s agent time, about $0.97. Locked files byte-identical, no `#[path]`, `unsafe`, locks or thread RNG. |
+| 2026-10-29 | nested-search v5, hardened verifier | Claude Haiku 5.5 (subscription) | same | same | 1 | Pass: 22 turns, 949 s agent time, about $0.33. Locked files byte-identical, no `#[path]`, `unsafe`, locks or thread RNG. The two trials ran side by side. |
 
 One attempt isn't a pass rate, but it shows v1 is far too easy for current mid-size models: the solve took no exploration and one fix.
 
@@ -354,7 +372,7 @@ The same self-test reported one alternative design rejected, on two runs in a ro
 
 ### Setup
 
-Every trial used Claude Code as the agent, run by Harbor 0.25.0 in Docker on the author's Claude subscription, with network access only to the model API: one attempt per model and version, with a 1-hour agent cap for v1-v3 and 30 minutes for v4-v5. Claude Sonnet 5.5 ran every version and Claude Haiku 5.5 ran v4 and v5. DeepSeek through another agent harness was considered in the plan but not run.
+Every trial used Claude Code as the agent, run by Harbor 0.25.0 in Docker on the author's Claude subscription, with network access only to the model API: one attempt per model and version, with a 1-hour agent cap for v1-v3 and 30 minutes for v4-v5. Claude Sonnet 5.5 ran every version and Claude Haiku 5.5 ran v4 and v5. Both re-ran v5 on 2026-10-29 against the hardened verifier; those are the results the README reports. DeepSeek through another agent harness was considered in the plan but not run.
 
 ## Format
 
