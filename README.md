@@ -42,7 +42,7 @@ No check reads the agent's source. Each hack is caught by the behaviour it break
 
 To check the checks, [`tools/mutants.py`](tools/mutants.py) puts one bug or hack at a time into the reference solution, and all 27 fail. Three other valid designs pass, two of them Haiku's and Sonnet's own unedited solutions. The reference fails none of 1,000 seeded runs per test file.
 
-## Difficulty Progression
+## Difficulty progression
 
 The task started much easier. Version 1 handed the agent my API and asked for an implementation. Over five versions I took the design away and added requirements that interact. Same setup as above, one attempt each:
 
@@ -55,6 +55,8 @@ The task started much easier. Version 1 handed the agent my API and asked for an
 | v4 | Haiku 5.5 | 30 min | 0, pass on re-verification | 587 s | 37 | $0.35 |
 | v5: + borrowing, per-component randomness | Sonnet 5.5 | 30 min | pass | 383 s | 11 | $0.85 |
 | v5 | Haiku 5.5 | 30 min | 0, pass on re-verification | 609 s | 22 | $0.37 |
+
+"0, pass on re-verification": the trial scored 0 because of an unfair check in the verifier. Once the check was fixed, the agent's saved solution passed ([DESIGN.md](DESIGN.md#calibration)).
 
 Taking the design away (v4) roughly doubled the effort, but no model ever came near the time limit. The v5 rows predate the verifier's hardening; the results above are a re-run of v5 against the current verifier.
 
